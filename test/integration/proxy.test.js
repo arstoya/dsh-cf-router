@@ -243,6 +243,36 @@ test('firstByteTimeoutMs 有 5000ms 硬下限：配 300 也不会提前掐断', 
   }
 })
 
+test('上游首字节超时：真实触发 502（受 5000ms 下限约束，本用例约 5 秒）', async () => {
+  // 这是「长时间无首字节」的真实路径覆盖：
+  // handleProxy 的 firstByteTimer 是 Math.max(5000, cfg.firstByteTimeoutMs)，
+  // 所以必须让上游拖过 5 秒才能触发。用例慢，但它覆盖的是真实故障场景，
+  // 不能为了跑得快就删掉。
+  const env = await boot({ status: 200, delayFirstByteMs: 6500 }, { firstByteTimeoutMs: 5000 })
+  try {
+    // 上游 6.5 秒才回，探测本身也会超时拿不到候选 → 会走直连兜底、就没有 IP 可以罚。
+    // 这里显式指定一条候选 IP，才能真正走到「转发超时 → noteFailure(ip)」这条路径。
+    api.state().currentIp.set(HOST, '127.0.0.1')
+    api.state().hosts.set(HOST, {
+      ips: ['127.0.0.1'],
+      results: [{ ip: '127.0.0.1', okCount: 3, samples: 3, median: 100, best: 100, colo: '', excluded: null }],
+      lastProbeAt: api.deps.now(),
+      error: null,
+    })
+
+    const started = Date.now()
+    const r = await request(env.port, { method: 'POST', body: '{}' })
+    const elapsed = Date.now() - started
+
+    assert.equal(r.status, 502, '首字节超时应回 502')
+    assert.match(r.body.toString(), /first_byte_timeout|upstream_error/)
+    assert.ok(elapsed >= 4500, `应在 5 秒左右触发，实际 ${elapsed}ms`)
+    await waitFor(() => api.statOf(HOST, '127.0.0.1').fail > 0, { timeoutMs: 2000, label: 'fail 计数' })
+  } finally {
+    await shutdown(env)
+  }
+})
+
 test('上游连接重置：返回 502', async () => {
   const env = await boot({ resetConnection: true })
   try {

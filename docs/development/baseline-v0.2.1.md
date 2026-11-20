@@ -33,9 +33,9 @@
 
 | 检查 | 结果 |
 |---|---|
-| `npm test` | **66 tests / 66 pass / 0 fail**，约 6.5 秒 |
+| `npm test` | **68 tests / 68 pass / 0 fail**，约 15 秒（含一个约 9 秒的首字节超时用例） |
 | `npm run doctor` | FAIL 0 · WARN 1 · 17 项（与开工前一致，未被破坏） |
-| 连续三次 `npm test` | 三次均 66/66，结果一致 |
+| 连续三次 `npm test` | 三次均 68/68，结果一致 |
 | 外网依赖 | 无。全部走本地 HTTPS fixture（自签证书） |
 | 真实 API Key | 不需要 |
 | 真实 DSH_HOME 写入 | 无（见 §六 的隔离机制） |
@@ -47,9 +47,9 @@
 | `test/unit/router.test.js` | 12 | 选路、冷却、切换、direct 模式、reset |
 | `test/unit/metrics.test.js` | 13 | EWMA、alpha 夹取、脏样本、scoreOf 语义 |
 | `test/unit/state.test.js` | 9 | 快照结构、DEFAULTS 一致性、测试隔离 |
-| `test/integration/probe.test.js` | 17 | DNS 成败、TCP 成败、TLS 校验、HTTP 200/401/404/500/503、超时、重置 |
-| `test/integration/proxy.test.js` | 15 | GET/POST/JSON/SSE/gzip/客户端断开/上游超时/Keep-Alive/direct/控制端点 |
-| **合计** | **66** | |
+| `test/integration/probe.test.js` | 18 | DNS 成败、TCP 成败、TLS 校验、HTTP 200/401/404/429/500/503、超时、重置 |
+| `test/integration/proxy.test.js` | 16 | GET/POST/JSON/SSE/gzip/客户端断开/首字节超时(真实触发)/上游重置/Keep-Alive/direct/控制端点 |
+| **合计** | **68** | |
 
 ---
 
@@ -145,7 +145,7 @@ Issue #2 / #3 会处理其中一部分；未列入的应单独开 issue。
 
 | 问题 | 说明 | 建议 |
 |---|---|---|
-| `firstByteTimeoutMs` 有 5000ms 硬下限 | `Math.max(5000, cfg.firstByteTimeoutMs)`，配 300 实际按 5000 生效 | 要可配置就得改这行；当前用测试钉住行为（`proxy.test.js` 有对应用例） |
+| `firstByteTimeoutMs` 有 5000ms 硬下限 | `Math.max(5000, cfg.firstByteTimeoutMs)`，配 300 实际按 5000 生效 | 要可配置就得改这行。当前两条用例钉住行为：一条验证下限存在，一条真实触发超时 |
 | 配置里的 `routingMode` 启动时不生效 | `apply()` 把 `cfg.routingMode` 记成 `lastCfgMode` 基准，导致首次 `currentMode()` 认为「设置页没动过」，沿用 `loadState()` 的 `auto` | 要修就是改基准语义，属行为变更，需单独立项 |
 | 请求/响应头未做 hop-by-hop 过滤 | `{ ...req.headers }` 与 `res.writeHead(..., upRes.headers)` 直接透传 | Issue #5 处理 |
 
@@ -155,7 +155,7 @@ Issue #2 / #3 会处理其中一部分；未列入的应单独开 issue。
 
 ```bash
 git checkout v0.1.0        # 回到本基准
-npm test                   # 66 tests / 66 pass
+npm test                   # 68 tests / 68 pass
 npm run doctor             # FAIL 0 · WARN 1（端口占用）
 ```
 

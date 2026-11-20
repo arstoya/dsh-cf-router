@@ -103,7 +103,7 @@ test('TLS 握手失败：证书不受信任时探测判失败', async () => {
   }
 })
 
-for (const status of [200, 401, 404, 500, 503]) {
+for (const status of [200, 401, 404, 429, 500, 503]) {
   test(`HTTP ${status}：都表示「网络可达」，探测算成功`, async () => {
     const up = await withUpstream({ status, body: '{"x":1}' })
     try {
