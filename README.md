@@ -4,6 +4,8 @@ A DSH plugin that pins Cloudflare-fronted API upstreams to the **fastest IPv4 ed
 
 It is not a standalone proxy — it runs inside the DeepSeek Harness host process.
 
+English · [简体中文](README.zh-CN.md)
+
 ## The problem
 
 On hosts that prefer IPv6, a dual-stack domain resolves to both A and AAAA records and the OS picks AAAA first. If the IPv6 route leaves through a far-away edge, every request pays a long TLS handshake. Measured against a Cloudflare-fronted API endpoint on one home connection (2026-11-06):
