@@ -38,6 +38,12 @@ function seedCandidates(host, entries) {
       ip: e.ip,
       okCount: e.okCount ?? 3,
       samples: 3,
+      // Issue #3 起评分读 ttfbMedian；median 保留为兼容别名，指向同一 TTFB 值
+      ttfbMedian: e.median,
+      ttfbBest: e.median,
+      totalMedian: (e.median ?? 0) + 20,
+      tcpMedian: 10,
+      tlsMedian: 20,
       median: e.median,
       best: e.median,
       colo: e.colo ?? 'HKG',

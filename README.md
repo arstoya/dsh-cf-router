@@ -85,7 +85,7 @@ Copy the block from [`cordis.patch.yml`](cordis.patch.yml) into your profile's p
 | `idleSkipMs` | `1800000` | Skip probe rounds when idle this long (`0` = never skip) |
 | `maxSockets` / `keepAlive` | `16` / `true` | Connection reuse |
 | `failThreshold` / `cooldownMs` | `2` / `60000` | Failures before an IP is dropped, and how long it stays out |
-| `ewmaAlpha` / `ewmaMaxMs` | `0.3` / `3000` | EWMA of real TTFB; samples above the cap are ignored so prompt prefill is not mistaken for network latency |
+| `ewmaAlpha` / `ewmaMaxMs` | `0.3` / `3000` | EWMA weight, and the cap applied to **TTFB samples only** — TCP/TLS are pure-network and never filtered, because only TTFB can be polluted by prompt prefill |
 | `firstByteTimeoutMs` | `60000` | Give up on an upstream that sends no first byte |
 | `upstreamTimeoutMs` | `600000` | Overall upstream timeout (raise for long reasoning) |
 | `allowDirectFallback` | `true` | Fall back to plain DNS when every candidate is cooling down |
@@ -110,10 +110,30 @@ Upstream connections are always made with `https.request` on port 443 with `serv
 
 | Tool | Purpose |
 | --- | --- |
-| `cf_router_status` | Proxy address, selected IP per domain, per-candidate probe medians / TTFB EWMA / success and failure counts / cooldown, recent switches, forwarding stats |
+| `cf_router_status` | Proxy address, selected IP per domain, per-candidate metric breakdown (see below), success/failure counts, cooldown, recent switches, forwarding stats |
 | `cf_router_probe` | Re-probe now (optionally one domain, optionally with a sample count) |
 | `cf_router_reset` | Clear failure counters, cooldowns and connection pools |
 | `cf_router_mode` | Switch `auto` / `direct` and persist it; without an argument it reports the current value |
+
+### Per-candidate metrics
+
+Since v0.2.1 each candidate reports six independent EWMA values. Every one of them is measured from a single well-defined event pair — nothing is mixed, and a value that cannot be measured is `null` rather than guessed.
+
+| Field | Start | End | Source |
+| --- | --- | --- | --- |
+| `tcpEwmaMs` | socket created | `connect` | probe |
+| `tlsEwmaMs` | TCP connected | `secureConnect` | probe / fresh request |
+| `probeTtfbEwmaMs` | request sent | response headers | probe |
+| `probeTotalEwmaMs` | request sent | body end | probe |
+| `freshTtfbEwmaMs` | request sent | response headers | real request, new connection |
+| `reusedTtfbEwmaMs` | request sent | response headers | real request, reused connection |
+
+`samples` counts how many accepted samples fed each EWMA. Routing score uses **`probeTtfbMs` only** — TCP/TLS are connection-establishment cost, and real-request TTFB is skewed by model prefill, so neither participates in ranking.
+
+Two compatibility notes:
+
+- `probeMs` / `probeBestMs` are retained but now mean **probe TTFB** (previously they included body download time).
+- `ewmaMs` is **gone** — it was the mixed TLS-or-TTFB value this split removed.
 
 ### HTTP control endpoints
 

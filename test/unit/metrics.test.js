@@ -1,32 +1,32 @@
 /**
- * metrics.test.js — EWMA 与评分（Issue #1 基准行为）
+ * metrics.test.js — 延迟指标拆分（Issue #3）
  *
- * 这里锁定的是**改造前**的语义，作为 Issue #3 重构的对照基线：
- *   - noteSuccess 的 EWMA 会被 ewmaMaxMs 截断（prefill 污染防护）
- *   - scoreOf 当前取 min(ewma, probeMedian)
- * 到 Issue #3 时这些断言会有意调整，届时同步改本文件。
+ * 改造前的问题：
+ *   1. probeOnce 的计时到 `res.end` 才结束，所以「探测中位数」实际混着响应体下载时间
+ *   2. handleProxy 里 `recordRequestSuccess(host, ip, { ttfbMs: tlsMs ?? ttfb })`
+ *      —— TLS 握手耗时和 HTTP 首字节混进同一个 EWMA
+ *   3. 新连接与复用连接的 TTFB 不区分
+ *   4. scoreOf 对不同量纲的两个数取 min，缺乏统计意义
+ *
+ * 本文件锁定拆分后的契约：
+ *   - 每个指标只由一种事件产生，单位统一是毫秒，含义见下表
+ *   - 无法可靠采集时明确为 null，绝不拿别的指标顶替
+ *   - ewmaMaxMs 只作用于可能被上游 prefill 污染的 TTFB
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import * as mod from '../../lib/index.js'
+import { setupPlugin, teardownPlugin } from '../helpers/setup.mjs'
 import { createClock } from '../helpers/fake-clock.mjs'
 import { assertCloseTo } from '../helpers/assertions.mjs'
 
 const api = mod.__testApi
-const HOST = 'api.test'
+const HOST = 'localhost'
 
 function setup(overrides = {}) {
-  api.reset()
   const clock = createClock()
-  api.deps.now = clock.now
-  api.configure({
-    targets: [HOST],
-    discoverEnabled: false,
-    ewmaAlpha: 0.5,
-    ewmaMaxMs: 3000,
-    ...overrides,
-  })
+  setupPlugin({ ewmaAlpha: 0.5, ewmaMaxMs: 3000, ...overrides }, { now: clock.now })
   return clock
 }
 
@@ -34,143 +34,227 @@ function seed(entries) {
   api.state().hosts.set(HOST, {
     ips: entries.map((e) => e.ip),
     results: entries.map((e) => ({
-      ip: e.ip, okCount: 3, samples: 3, median: e.median, best: e.median, colo: 'HKG', excluded: null,
+      ip: e.ip,
+      okCount: e.okCount ?? 3,
+      samples: 3,
+      // 探测结果现在用 TTFB 中位数作为分数来源
+      ttfbMedian: e.ttfb ?? 100,
+      ttfbBest: e.ttfb ?? 100,
+      totalMedian: e.total ?? (e.ttfb ?? 100) + 20,
+      tcpMedian: e.tcp ?? 10,
+      tlsMedian: e.tls ?? 20,
+      colo: 'HKG',
+      excluded: null,
     })),
     lastProbeAt: api.deps.now(),
     error: null,
   })
 }
 
-test.afterEach(() => mod.__resetForTest())
+test.afterEach(() => teardownPlugin())
 
-test('首个样本直接成为 EWMA 起点', () => {
-  setup({ ewmaAlpha: 0.5 })
-  seed([{ ip: '203.0.113.1', median: 200 }])
-  api.state().currentIp.set(HOST, '203.0.113.1')
+/* ============================================================
+ * updateEwma 通用函数
+ * ============================================================ */
 
-  api.noteSuccess(HOST, '203.0.113.1', 400)
-
-  assert.equal(api.statOf(HOST, '203.0.113.1').ewmaMs, 400)
+test('updateEwma：首个样本直接成为起点', () => {
+  assert.equal(api.updateEwma(null, 400, 0.5), 400)
 })
 
-test('alpha=0.5 时第二个样本取中值', () => {
-  setup({ ewmaAlpha: 0.5 })
-  seed([{ ip: '203.0.113.1', median: 200 }])
-  api.state().currentIp.set(HOST, '203.0.113.1')
-
-  api.noteSuccess(HOST, '203.0.113.1', 400)
-  api.noteSuccess(HOST, '203.0.113.1', 600)
-
-  // 400*0.5 + 600*0.5 = 500
-  assertCloseTo(api.statOf(HOST, '203.0.113.1').ewmaMs, 500, { label: 'ewma' })
+test('updateEwma：第二个样本按 alpha 加权', () => {
+  assertCloseTo(api.updateEwma(400, 600, 0.5), 500, { label: 'ewma' })
+  assertCloseTo(api.updateEwma(400, 600, 0.25), 450, { label: 'ewma' })
 })
 
-test('超过 ewmaMaxMs 的样本被丢弃（大 prompt prefill 不污染线路评分）', () => {
-  setup({ ewmaAlpha: 0.5, ewmaMaxMs: 3000 })
-  seed([{ ip: '203.0.113.1', median: 200 }])
-  api.state().currentIp.set(HOST, '203.0.113.1')
-
-  api.noteSuccess(HOST, '203.0.113.1', 400)
-  api.noteSuccess(HOST, '203.0.113.1', 12_000)   // 模型推理 12 秒，不是网络问题
-
-  assertCloseTo(api.statOf(HOST, '203.0.113.1').ewmaMs, 400, { label: 'ewma 应保持 400' })
-  assert.equal(api.statOf(HOST, '203.0.113.1').ok, 2, '样本仍要计入成功次数')
-})
-
-test('非有限值、零、负数样本不进入 EWMA', () => {
-  setup({ ewmaAlpha: 0.5 })
-  seed([{ ip: '203.0.113.1', median: 200 }])
-  api.state().currentIp.set(HOST, '203.0.113.1')
-
-  for (const bad of [NaN, Infinity, -1, 0, null, undefined]) {
-    api.noteSuccess(HOST, '203.0.113.1', bad)
+test('updateEwma：脏样本一律不改动原值', () => {
+  for (const bad of [NaN, Infinity, -Infinity, -1, 0, null, undefined, '100']) {
+    assert.equal(api.updateEwma(300, bad, 0.5), 300, `脏样本 ${String(bad)} 不该改 EWMA`)
   }
-
-  assert.equal(api.statOf(HOST, '203.0.113.1').ewmaMs, null, '脏样本不该产生 EWMA')
 })
 
-test('ewmaAlpha 被夹在 [0.05, 0.9]', () => {
-  setup({ ewmaAlpha: 5 })
-  seed([{ ip: '203.0.113.1', median: 200 }])
-  api.state().currentIp.set(HOST, '203.0.113.1')
-
-  api.noteSuccess(HOST, '203.0.113.1', 1000)
-  api.noteSuccess(HOST, '203.0.113.1', 2000)
-
-  // alpha 被夹到 0.9：1000*0.1 + 2000*0.9 = 1900
-  assertCloseTo(api.statOf(HOST, '203.0.113.1').ewmaMs, 1900, { label: 'alpha 夹取' })
+test('updateEwma：alpha 越界被夹取', () => {
+  // alpha 5 → 夹到 0.9：1000*0.1 + 2000*0.9 = 1900
+  assertCloseTo(api.updateEwma(1000, 2000, 5), 1900, { label: 'alpha 上限' })
+  // alpha -1 → 夹到 0.05：1000*0.95 + 2000*0.05 = 1050
+  assertCloseTo(api.updateEwma(1000, 2000, -1), 1050, { label: 'alpha 下限' })
 })
 
-test('scoreOf 取 min(ewma, probeMedian)：任一指标快就不判它慢', () => {
-  setup({ ewmaAlpha: 0.5 })
-  seed([{ ip: '203.0.113.1', median: 600 }])
-  api.state().currentIp.set(HOST, '203.0.113.1')
+/* ============================================================
+ * 指标结构：六个独立指标
+ * ============================================================ */
 
-  api.noteSuccess(HOST, '203.0.113.1', 200)   // EWMA=200，比探测 600 快
-
-  assert.equal(api.scoreOf(HOST, '203.0.113.1', api.deps.now()), 200)
-})
-
-test('scoreOf：EWMA 超出 probeMedian×4 时视为被污染，回退到探测值', () => {
-  setup({ ewmaAlpha: 0.5, ewmaMaxMs: 100_000 })
-  seed([{ ip: '203.0.113.1', median: 100 }])
-  api.state().currentIp.set(HOST, '203.0.113.1')
-
-  api.noteSuccess(HOST, '203.0.113.1', 900)   // 900 > 100*4，应被丢弃
-
-  assert.equal(api.scoreOf(HOST, '203.0.113.1', api.deps.now()), 100)
-})
-
-test('scoreOf 对冷却中的 IP 返回 Infinity', () => {
-  const clock = setup()
-  seed([{ ip: '203.0.113.1', median: 100 }])
+test('statOf 初始结构含六个独立 EWMA 与六个采样计数', () => {
+  setup()
   const s = api.statOf(HOST, '203.0.113.1')
-  s.penaltyUntil = clock.now() + 1000
+
+  for (const k of ['tcpEwmaMs', 'tlsEwmaMs', 'probeTtfbEwmaMs', 'probeTotalEwmaMs', 'freshTtfbEwmaMs', 'reusedTtfbEwmaMs']) {
+    assert.ok(k in s.metrics, `metrics 缺 ${k}`)
+    assert.equal(s.metrics[k], null, `${k} 初始应为 null 而非 0`)
+  }
+  for (const k of ['tcp', 'tls', 'probeTtfb', 'probeTotal', 'freshTtfb', 'reusedTtfb']) {
+    assert.equal(s.samples[k], 0, `${k} 初始计数应为 0`)
+  }
+})
+
+test('每个指标只由对应事件更新，互不串味', () => {
+  setup()
+  const s = api.statOf(HOST, '203.0.113.1')
+
+  api.recordProbeSample(HOST, '203.0.113.1', { tcpMs: 12, tlsMs: 34, ttfbMs: 56, totalMs: 78 })
+
+  assertCloseTo(s.metrics.tcpEwmaMs, 12)
+  assertCloseTo(s.metrics.tlsEwmaMs, 34)
+  assertCloseTo(s.metrics.probeTtfbEwmaMs, 56)
+  assertCloseTo(s.metrics.probeTotalEwmaMs, 78)
+  // 真实请求指标不该被探测污染
+  assert.equal(s.metrics.freshTtfbEwmaMs, null)
+  assert.equal(s.metrics.reusedTtfbEwmaMs, null)
+})
+
+test('新连接与复用连接的 TTFB 走不同 EWMA', () => {
+  setup()
+  const s = api.statOf(HOST, '203.0.113.1')
+
+  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 300, reused: false }, 0)
+  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 100, reused: true }, 0)
+
+  assertCloseTo(s.metrics.freshTtfbEwmaMs, 300, { label: '新连接' })
+  assertCloseTo(s.metrics.reusedTtfbEwmaMs, 100, { label: '复用连接' })
+  assert.equal(s.samples.freshTtfb, 1)
+  assert.equal(s.samples.reusedTtfb, 1)
+})
+
+test('TLS 采样不进入 TTFB EWMA（改造前二者混在一起）', () => {
+  setup()
+  const s = api.statOf(HOST, '203.0.113.1')
+
+  // 新连接：TLS 80ms，TTFB 500ms。改造前会把 80ms 当 TTFB 记进去
+  api.recordRequestSuccess(HOST, '203.0.113.1', { tlsMs: 80, ttfbMs: 500, totalMs: 900, reused: false }, 0)
+
+  assertCloseTo(s.metrics.tlsEwmaMs, 80, { label: 'TLS' })
+  assertCloseTo(s.metrics.freshTtfbEwmaMs, 500, { label: 'TTFB' })
+  // 关键：TTFB 的 EWMA 绝不能因为 TLS 快而变小
+  assert.notEqual(s.metrics.freshTtfbEwmaMs, 80)
+})
+
+/* ============================================================
+ * 模型延迟隔离（Issue #3 §3.8）
+ * ============================================================ */
+
+test('10 秒模型推理不会被当成 TLS 网络延迟', () => {
+  setup({ ewmaMaxMs: 3000 })
+  const s = api.statOf(HOST, '203.0.113.1')
+
+  // IP-A：TLS 100ms，但模型想了 10 秒才吐首字节
+  api.recordRequestSuccess(HOST, '203.0.113.1', { tlsMs: 100, ttfbMs: 10_100, reused: false }, 0)
+
+  assertCloseTo(s.metrics.tlsEwmaMs, 100, { label: 'TLS 仍是 100ms' })
+  assert.equal(s.metrics.freshTtfbEwmaMs, null, '10s TTFB 超出 ewmaMaxMs，不该进 EWMA')
+  assert.equal(s.samples.freshTtfb, 0, '被丢弃的样本不计数')
+  // 原始值必须留档，不能因为不进 EWMA 就丢掉
+  assert.equal(s.lastTtfbMs, 10_100, '原始 TTFB 要保留供观察')
+})
+
+test('TLS 快不能把 10 秒 TTFB 伪装成 100ms', () => {
+  setup({ ewmaMaxMs: 3000 })
+  const s = api.statOf(HOST, '203.0.113.1')
+
+  api.recordRequestSuccess(HOST, '203.0.113.1', { tlsMs: 100, ttfbMs: 10_100, reused: false }, 0)
+  // 评分绝不能拿 TLS 的值顶替 TTFB
+  const score = api.scoreOf(HOST, '203.0.113.1', api.deps.now())
+  assert.notEqual(score, 100, '评分不能等于 TLS 耗时')
+})
+
+test('ewmaMaxMs 不作用于 TCP 与 TLS（它们不受 prefill 影响）', () => {
+  setup({ ewmaMaxMs: 200 })
+  const s = api.statOf(HOST, '203.0.113.1')
+
+  // TLS 800ms 远超 ewmaMaxMs(200)，但它不是 prefill，必须照记
+  api.recordRequestSuccess(HOST, '203.0.113.1', { tlsMs: 800, ttfbMs: 900, reused: false }, 0)
+
+  assertCloseTo(s.metrics.tlsEwmaMs, 800, { label: 'TLS 不被 ewmaMaxMs 过滤' })
+  assert.equal(s.metrics.freshTtfbEwmaMs, null, 'TTFB 900 > 200 被过滤')
+})
+
+/* ============================================================
+ * scoreOf：只用有明确来源的数据
+ * ============================================================ */
+
+test('scoreOf 以探测 TTFB 为主要依据', () => {
+  setup()
+  seed([{ ip: '203.0.113.1', ttfb: 120 }])
+
+  assertCloseTo(api.scoreOf(HOST, '203.0.113.1', api.deps.now()), 120)
+})
+
+test('scoreOf 不再对 TLS 与完整往返取 min', () => {
+  setup()
+  seed([{ ip: '203.0.113.1', ttfb: 600, total: 900, tls: 80 }])
+  const s = api.statOf(HOST, '203.0.113.1')
+
+  // 即使真实请求的 TLS 只有 80ms，也不能把分数拉到 80
+  api.recordRequestSuccess(HOST, '203.0.113.1', { tlsMs: 80, ttfbMs: 100, reused: false }, 0)
+
+  const score = api.scoreOf(HOST, '203.0.113.1', api.deps.now())
+  assert.ok(score >= 80, `评分不该低于 80，实际 ${score}`)
+  assert.notEqual(score, 80, '不能用 TLS 值作为评分')
+})
+
+test('scoreOf 在没有任何探测数据时返回 Infinity', () => {
+  setup()
+  api.state().hosts.set(HOST, { ips: [], results: [], lastProbeAt: api.deps.now(), error: 'DNS 无 A 记录' })
+  assert.equal(api.scoreOf(HOST, '203.0.113.1', api.deps.now()), Infinity)
+})
+
+test('scoreOf 对冷却中的 IP 仍返回 Infinity', () => {
+  const clock = setup()
+  seed([{ ip: '203.0.113.1', ttfb: 100 }])
+  api.statOf(HOST, '203.0.113.1').penaltyUntil = clock.now() + 5000
 
   assert.equal(api.scoreOf(HOST, '203.0.113.1', clock.now()), Infinity)
 })
 
-test('scoreOf 对完全没有数据的 IP 返回 Infinity', () => {
+/* ============================================================
+ * 状态接口
+ * ============================================================ */
+
+test('statusSnapshot 每个候选暴露六个独立指标与计数', () => {
   setup()
-  seed([{ ip: '203.0.113.9', median: Infinity }])
-  const entry = api.state().hosts.get(HOST)
-  entry.results[0].okCount = 0
-  entry.results[0].median = Infinity
+  seed([{ ip: '203.0.113.1', ttfb: 150 }])
+  api.recordProbeSample(HOST, '203.0.113.1', { tcpMs: 10, tlsMs: 20, ttfbMs: 150, totalMs: 180 })
+  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 200, reused: true }, 0)
 
-  assert.equal(api.scoreOf(HOST, '203.0.113.9', api.deps.now()), Infinity)
-})
+  const cand = api.statusSnapshot().hosts[0].candidates[0]
 
-test('statusSnapshot 里的候选字段在无样本时是 null 而不是 0', () => {
-  setup()
-  seed([{ ip: '203.0.113.1', median: 120 }])
-
-  const snap = api.statusSnapshot()
-  const cand = snap.hosts[0].candidates[0]
-
-  assert.equal(cand.ewmaMs, null, '没有真实请求样本时 ewmaMs 必须是 null')
-  assert.equal(cand.ok, 0)
-  assert.equal(cand.fail, 0)
-  assert.equal(cand.probeMs, 120)
-})
-
-test('TCP/TLS 计时工具函数：ipToInt / intToIp 往返一致', () => {
-  for (const ip of ['0.0.0.0', '127.0.0.1', '203.0.113.7', '255.255.255.255']) {
-    assert.equal(api.intToIp(api.ipToInt(ip)), ip)
+  for (const k of ['tcpEwmaMs', 'tlsEwmaMs', 'probeTtfbEwmaMs', 'probeTotalEwmaMs', 'freshTtfbEwmaMs', 'reusedTtfbEwmaMs']) {
+    assert.ok(k in cand.metrics, `候选缺 metrics.${k}`)
   }
-  assert.ok(Number.isNaN(api.ipToInt('300.1.1.1')))
-  assert.ok(Number.isNaN(api.ipToInt('1.2.3')))
-})
-
-test('样本生成：sampleFromRanges 落在给定网段内且不重复超出配额', () => {
-  setup()
-  const ips = api.sampleFromRanges(['203.0.113.0/24'], 3)
-  assert.equal(ips.length, 3)
-  for (const ip of ips) assert.match(ip, /^203\.0\.113\.\d+$/)
-})
-
-test('randInCidr 对非法输入返回 null', () => {
-  setup()
-  for (const bad of ['', 'x/24', '1.2.3.4', '1.2.3.4/33', '1.2.3.4/4']) {
-    assert.equal(api.randInCidr(bad), null, `应为 null: ${bad}`)
+  for (const k of ['tcp', 'tls', 'probeTtfb', 'probeTotal', 'freshTtfb', 'reusedTtfb']) {
+    assert.ok(k in cand.samples, `候选缺 samples.${k}`)
   }
+
+  assertCloseTo(cand.metrics.tcpEwmaMs, 10)
+  assertCloseTo(cand.metrics.probeTtfbEwmaMs, 150)
+  assertCloseTo(cand.metrics.reusedTtfbEwmaMs, 200)
+  assert.equal(cand.metrics.freshTtfbEwmaMs, null, '没有新连接样本时应为 null')
+})
+
+test('statusSnapshot 无样本时全部为 null，不伪造默认值', () => {
+  setup()
+  seed([{ ip: '203.0.113.1', ttfb: 100 }])
+
+  const cand = api.statusSnapshot().hosts[0].candidates[0]
+  for (const k of ['tcpEwmaMs', 'tlsEwmaMs', 'freshTtfbEwmaMs', 'reusedTtfbEwmaMs']) {
+    assert.equal(cand.metrics[k], null, `${k} 不该有值`)
+  }
+})
+
+test('statusSnapshot 保留兼容字段 probeMs（语义改为 TTFB）', () => {
+  setup()
+  seed([{ ip: '203.0.113.1', ttfb: 123 }])
+  const cand = api.statusSnapshot().hosts[0].candidates[0]
+
+  assert.equal(cand.probeMs, 123, 'probeMs 现在表示探测 TTFB 中位数')
+  assert.equal(cand.probeTtfbMs, 123)
+  assert.equal(cand.probeTotalMs, 143, 'totalMedian = ttfb + 20')
 })

@@ -47,6 +47,11 @@ function seed(entries) {
       ip: e.ip,
       okCount: e.okCount ?? 3,
       samples: 3,
+      ttfbMedian: e.median,
+      ttfbBest: e.median,
+      totalMedian: (e.median ?? 0) + 20,
+      tcpMedian: 10,
+      tlsMedian: 20,
       median: e.median,
       best: e.median,
       colo: 'HKG',
@@ -85,7 +90,7 @@ test('场景 A：旧请求迟到成功不会把路由改回旧 IP', () => {
   const okBefore = api.statOf(HOST, '203.0.113.1').ok
 
   // A 的旧请求迟到成功（携带旧 generation）
-  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 120 }, genAtRequest)
+  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 120, reused: false }, genAtRequest)
 
   assert.equal(api.state().currentIp.get(HOST), '203.0.113.2', '路由必须仍是 B')
   assert.equal(api.getRouteGeneration(HOST), genNow, 'generation 不该因成功回调变化')
@@ -286,16 +291,17 @@ test('recordRequestSuccess 不改变任何 host 的 currentIp', () => {
   assert.equal(api.state().currentIp.get(HOST), '203.0.113.2', '成功回调绝不能改路由')
 })
 
-test('recordRequestSuccess 在统计与 EWMA 上与原 noteSuccess 等价', () => {
+test('recordRequestSuccess 的 EWMA 语义保持（400→600、alpha 0.5 得 500）', () => {
   setup({ ewmaAlpha: 0.5 })
   seed([{ ip: '203.0.113.1', median: 200 }])
 
-  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 400 }, 0)
-  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 600 }, 0)
+  // Issue #3 起 TTFB 分新连接/复用两路，这里固定走「新连接」
+  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 400, reused: false }, 0)
+  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 600, reused: false }, 0)
 
   const s = api.statOf(HOST, '203.0.113.1')
   assert.equal(s.ok, 2)
-  assert.equal(s.ewmaMs, 500, 'EWMA 语义不变（400→600，alpha 0.5）')
+  assert.equal(s.metrics.freshTtfbEwmaMs, 500, 'EWMA 语义不变（400→600，alpha 0.5）')
 })
 
 test('多次真切换后 generation 等于切换次数', () => {

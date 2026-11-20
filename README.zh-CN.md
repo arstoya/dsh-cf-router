@@ -85,7 +85,7 @@ node scripts/doctor.mjs
 | `idleSkipMs` | `1800000` | 空闲这么久就跳过探测轮次（`0` = 永不跳过） |
 | `maxSockets` / `keepAlive` | `16` / `true` | 连接复用 |
 | `failThreshold` / `cooldownMs` | `2` / `60000` | 连续失败几次判死、冷却多久 |
-| `ewmaAlpha` / `ewmaMaxMs` | `0.3` / `3000` | 真实 TTFB 的 EWMA；超过上限的样本丢弃，避免把大 prompt 的 prefill 当成网络延迟 |
+| `ewmaAlpha` / `ewmaMaxMs` | `0.3` / `3000` | EWMA 权重；上限**只作用于 TTFB 类样本** —— TCP/TLS 是纯网络指标，不过滤，因为只有 TTFB 会被 prompt prefill 污染 |
 | `firstByteTimeoutMs` | `60000` | 上游迟迟不给首字节就放弃 |
 | `upstreamTimeoutMs` | `600000` | 上游整体超时（长推理要放宽） |
 | `allowDirectFallback` | `true` | 所有候选都在冷却时退回普通 DNS 连接 |
@@ -110,10 +110,30 @@ node scripts/doctor.mjs
 
 | 工具 | 作用 |
 | --- | --- |
-| `cf_router_status` | 代理地址、每个域名选中的 IP、各候选的握手中位数 / TTFB EWMA / 成败次数 / 冷却剩余、最近的切换事件、转发统计 |
+| `cf_router_status` | 代理地址、每个域名选中的 IP、各候选的指标明细（见下）、成败次数、冷却剩余、最近的切换事件、转发统计 |
 | `cf_router_probe` | 立即重测（可指定域名、可指定取样次数） |
 | `cf_router_reset` | 清空失败计数、冷却与连接池 |
 | `cf_router_mode` | 切换 `auto` / `direct` 并持久化；不传参则查询当前值 |
+
+### 每个候选的指标
+
+v0.2.1 起每个候选上报六个独立 EWMA。每一个都只由一对明确的起止事件产生，互不混杂；采不到就返回 `null`，不拿别的指标顶替。
+
+| 字段 | 起点 | 终点 | 来源 |
+| --- | --- | --- | --- |
+| `tcpEwmaMs` | socket 创建 | `connect` | 探测 |
+| `tlsEwmaMs` | TCP 连接完成 | `secureConnect` | 探测 / 新建连接的真实请求 |
+| `probeTtfbEwmaMs` | 请求发出 | 收到响应头 | 探测 |
+| `probeTotalEwmaMs` | 请求发出 | 响应体结束 | 探测 |
+| `freshTtfbEwmaMs` | 请求发出 | 收到响应头 | 真实请求，新连接 |
+| `reusedTtfbEwmaMs` | 请求发出 | 收到响应头 | 真实请求，复用连接 |
+
+`samples` 记录每个 EWMA 采纳了多少个样本。**路由评分只用 `probeTtfbMs`** —— TCP/TLS 是建连成本，真实请求 TTFB 会被模型 prefill 拉偏，两者都不参与排序。
+
+两处兼容性说明：
+
+- `probeMs` / `probeBestMs` 保留，但语义改为**探测 TTFB**（改造前含响应体下载时间）。
+- `ewmaMs` **已移除** —— 它正是本次拆分掉的「TLS 或 TTFB」混指标。
 
 ### HTTP 控制端点
 

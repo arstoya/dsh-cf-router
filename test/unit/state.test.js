@@ -67,9 +67,11 @@ test('statusSnapshot 列出 host 与候选的完整字段', () => {
   assert.equal(h.host, HOST)
   assert.equal(h.current, '203.0.113.1')
   assert.equal(h.candidates.length, 1)
-  for (const key of ['ip', 'colo', 'probeMs', 'probeBestMs', 'probeOk', 'ewmaMs', 'ok', 'fail', 'consecutiveFail', 'cooldownMsLeft', 'score']) {
+  // Issue #3：ewmaMs 被拆成 metrics 里的六个独立指标，不再有混指数字段
+  for (const key of ['ip', 'colo', 'probeMs', 'probeBestMs', 'probeTtfbMs', 'probeTotalMs', 'probeOk', 'metrics', 'samples', 'ok', 'fail', 'consecutiveFail', 'cooldownMsLeft', 'score']) {
     assert.ok(key in h.candidates[0], `候选缺字段 ${key}`)
   }
+  assert.equal('ewmaMs' in h.candidates[0], false, 'ewmaMs 已按 Issue #3 拆分，不应再出现')
 })
 
 test('statusSnapshot 的统计字段完整', () => {

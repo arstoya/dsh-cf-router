@@ -33,9 +33,9 @@
 
 | 检查 | 结果 |
 |---|---|
-| `npm test` | **79 tests / 79 pass / 0 fail**，约 15 秒（含一个约 9 秒的首字节超时用例） |
+| `npm test` | **99 tests / 99 pass / 0 fail**，约 17 秒（含一个约 9 秒的首字节超时用例） |
 | `npm run doctor` | FAIL 0 · WARN 1 · 17 项（与开工前一致，未被破坏） |
-| 连续三次 `npm test` | 三次均 79/79，结果一致 |
+| 连续三次 `npm test` | 三次均 99/99，结果一致 |
 | 外网依赖 | 无。全部走本地 HTTPS fixture（自签证书） |
 | 真实 API Key | 不需要 |
 | 真实 DSH_HOME 写入 | 无（见 §六 的隔离机制） |
@@ -50,7 +50,8 @@
 | `test/integration/probe.test.js` | 18 | DNS 成败、TCP 成败、TLS 校验、HTTP 200/401/404/429/500/503、超时、重置 |
 | `test/integration/proxy.test.js` | 16 | GET/POST/JSON/SSE/gzip/客户端断开/首字节超时(真实触发)/上游重置/Keep-Alive/direct/控制端点 |
 | `test/regression/router-race.test.js` | 11 | 旧请求迟到成功/失败、旧探测覆盖、100 并发交错（Issue #2） |
-| **合计** | **79** | |
+| `test/integration/probe-metrics.test.js` | 15 | 四段计时边界、状态码、超时/中断/重置、measureIp 聚合（Issue #3） |
+| **合计** | **99** | |
 
 ---
 
@@ -143,12 +144,29 @@ Issue #2 落地后的契约（`test/regression/router-race.test.js` 守护）：
 
 ### 7.2 与 Issue #3 相关
 
-| 问题 | 位置 | 现状 |
+| 问题 | 位置 | 状态 |
 |---|---|---|
-| 探测耗时含响应体下载 | `probeOnce` | `finish()` 在 `res.end` 之后，`median` 不是纯 TTFB |
-| TLS 与 TTFB 混进同一个 EWMA | `handleProxy` | `noteSuccess(host, ip, tlsMs ?? ttfb)` |
-| 新连接/复用连接 TTFB 不区分 | `handleProxy` | 同一个 `ewmaMs` |
-| `scoreOf` 对不同量纲取 min | `scoreOf` | `min(ewma, probeMedian)` 缺乏统计意义 |
+| 探测耗时含响应体下载 | `probeOnce` | **已修复（Issue #3）**：TTFB 在 `response` 事件记录，total 在 `end` 单独记录 |
+| TLS 与 TTFB 混进同一个 EWMA | `handleProxy` | **已修复（Issue #3）**：拆成六个独立指标，各自由单一事件产生 |
+| 新连接/复用连接 TTFB 不区分 | `handleProxy` | **已修复（Issue #3）**：`freshTtfbEwmaMs` / `reusedTtfbEwmaMs` 分开 |
+| `scoreOf` 对不同量纲取 min | `scoreOf` | **已修复（Issue #3）**：只用探测 TTFB 中位数排序 |
+
+Issue #3 落地后的指标契约（`test/unit/metrics.test.js` 与
+`test/integration/probe-metrics.test.js` 守护）：
+
+| 字段 | 起点 | 终点 | 来源 |
+|---|---|---|---|
+| `tcpEwmaMs` | socket 创建 | `connect` | 探测 |
+| `tlsEwmaMs` | TCP 完成 | `secureConnect` | 探测 / 新建连接的真实请求 |
+| `probeTtfbEwmaMs` | 请求发出 | 收到响应头 | 探测 |
+| `probeTotalEwmaMs` | 请求发出 | 响应体结束 | 探测 |
+| `freshTtfbEwmaMs` | 请求发出 | 收到响应头 | 真实请求，新连接 |
+| `reusedTtfbEwmaMs` | 请求发出 | 收到响应头 | 真实请求，复用连接 |
+
+- `ewmaMaxMs` **只过滤 TTFB 类样本**；TCP/TLS 是纯网络指标，不受该阈值影响
+- `updateEwma()` 只接受真正的 number，刻意不做隐式转换（避免掩盖类型错误）
+- `ewmaMs` 字段已移除；`probeMs` / `probeBestMs` 保留但语义改为探测 TTFB
+- `handleProxy` 的耗时测量改回 `process.hrtime.bigint()`（`deps.now()` 是墙钟，会受系统时间调整影响）
 
 ### 7.3 与本轮无关、但测出来的
 
@@ -164,7 +182,7 @@ Issue #2 落地后的契约（`test/regression/router-race.test.js` 守护）：
 
 ```bash
 git checkout v0.1.0        # 回到本基准
-npm test                   # 79 tests / 79 pass
+npm test                   # 99 tests / 99 pass
 npm run doctor             # FAIL 0 · WARN 1（端口占用）
 ```
 
