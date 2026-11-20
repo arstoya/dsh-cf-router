@@ -1,0 +1,55 @@
+# dsh-cf-router — 上游连接自动优选
+#
+# 本地起一个 HTTP 反向代理（默认 127.0.0.1:8787），转发到 Cloudflare 前置的
+# API 上游时：
+#   · 只连 IPv4（避开 Windows 的 IPv6 优先，那条路常绕道 LAX）
+#   · 只连当前探测出来的最优边缘 IP（SNI 仍是原域名）
+#   · 复用长连接，后续请求省掉一次 TLS 握手
+#   · 连接失败立即降权并重新优选
+#
+# 接法：把 provider 的 baseURL 指到 http://127.0.0.1:8787
+#       （路径原样透传，例如 /provider/v1/chat/completions）
+- insert:
+    - id: dsh-cf-router
+      name: dsh-cf-router
+      inject: [ tools ]
+      config:
+        targets:
+          - "api.commandcode.ai"
+        listenHost: "127.0.0.1"
+        listenPort: 8787
+        probePath: "/provider/v1/models"
+        probeSamples: 3
+        probeTimeoutMs: 6000
+        probeIntervalMs: 300000
+        # 候选池：DNS 只给 3 个 IP，挑不出真正更快的。开启后从 CF 公开网段抽样补充，
+        # 每段抽 discoverPerRange 个，15 段 → 15 个，加上 DNS 的共约 18 个候选。
+        # 实测（2026-11-11）：CF 在国内只有 104.26.x / 172.67.x 这几个段会落 HKG，
+        # 其它段抽到的全是 LAX，所以抽多了只是噪声，1 个/段够做故障兜底。
+        discoverEnabled: true
+        discoverPerRange: 1
+        # 两级测速：候选多时先用 TCP 快速筛（L1），只对最快的 l2TopN 个做完整 HTTP 实测（L2）
+        l1Concurrency: 20
+        l1TimeoutMs: 1200
+        l2TopN: 10
+        # 只保留落在这些边缘节点的 IP（如 ["HKG"]）；留空 = 不限制，只把 colo 记在状态里
+        coloAllow: []
+        # 超过这么久没有真实请求就跳过探测轮次（默认 30 分钟，0 = 永不跳过）
+        idleSkipMs: 1800000
+        healthCheckMs: 30000
+        maxSockets: 16
+        keepAlive: true
+        failThreshold: 2
+        cooldownMs: 60000
+        ewmaAlpha: 0.3
+        # TTFB 超过这个值不计入 EWMA（大 prompt 的 prefill 不是网络质量）
+        ewmaMaxMs: 3000
+        firstByteTimeoutMs: 60000
+        allowDirectFallback: true
+        # auto   = 优选最快的 IPv4，失败自动切换（默认）
+        # direct = 不做优选，按系统 DNS 直连（仍经过本地代理，用于排查优选本身的问题）
+        # 运行时可用 cf_router_mode 工具或 GET /__router/mode?value= 切换，选择写入 stateFile 并保留
+        routingMode: "auto"
+        stateFile: ""
+        upstreamTimeoutMs: 600000
+        verbose: false

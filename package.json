@@ -1,0 +1,60 @@
+{
+  "name": "dsh-cf-router",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local reverse proxy that pins Cloudflare-fronted API upstreams to the fastest IPv4 edge (probe TCP+TLS+TTFB, keep-alive reuse, automatic failover). A DSH plugin.",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cloudflare",
+    "reverse-proxy",
+    "ipv4",
+    "edge-selection"
+  ],
+  "license": "MIT",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "doctor": "node scripts/doctor.mjs",
+    "test": "node scripts/doctor.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.0-rc.1 <0.3.0"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.0-rc.1": "compatible",
+        "0.2.1-rc.1": "compatible",
+        "0.2.1-rc.2": "compatible",
+        "0.2.1-rc.3": "compatible",
+        "0.2.1-rc.4": "compatible",
+        "0.2.1-rc.5": "compatible"
+      }
+    }
+  }
+}

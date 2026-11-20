@@ -1,0 +1,19 @@
+# 依赖（peer 由 DSH 宿主提供，不随包分发）
+node_modules/
+package-lock.json
+
+# 运行时产物
+*-state.json
+cf-router-state.json
+*.log
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# 临时
+tmp/
+*.tmp
