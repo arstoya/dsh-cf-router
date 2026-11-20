@@ -2,37 +2,39 @@
 #
 # 本地起一个 HTTP 反向代理（默认 127.0.0.1:8787），转发到 Cloudflare 前置的
 # API 上游时：
-#   · 只连 IPv4（避开 Windows 的 IPv6 优先，那条路常绕道 LAX）
+#   · 只连 IPv4（避开某些系统 IPv6 优先的路由，那条路常绕道海外边缘）
 #   · 只连当前探测出来的最优边缘 IP（SNI 仍是原域名）
 #   · 复用长连接，后续请求省掉一次 TLS 握手
 #   · 连接失败立即降权并重新优选
 #
 # 接法：把 provider 的 baseURL 指到 http://127.0.0.1:8787
-#       （路径原样透传，例如 /provider/v1/chat/completions）
+#       （路径原样透传，例如 /v1/chat/completions）
+#
+# ⚠ 必改：下面的 targets / probePath 是占位值，装之前换成你自己的上游域名。
 - insert:
     - id: dsh-cf-router
       name: dsh-cf-router
       inject: [ tools ]
       config:
+        # 要优选的域名。留空则代理一律回 400 no_target，不会瞎转发。
         targets:
-          - "api.commandcode.ai"
+          - "api.example.com"
         listenHost: "127.0.0.1"
         listenPort: 8787
-        probePath: "/provider/v1/models"
+        # 探测路径：任何返回响应的路径都算通（200 / 401 / 404 都行），挑最便宜的那个。
+        probePath: "/v1/models"
         probeSamples: 3
         probeTimeoutMs: 6000
         probeIntervalMs: 300000
-        # 候选池：DNS 只给 3 个 IP，挑不出真正更快的。开启后从 CF 公开网段抽样补充，
-        # 每段抽 discoverPerRange 个，15 段 → 15 个，加上 DNS 的共约 18 个候选。
-        # 实测（2026-11-11）：CF 在国内只有 104.26.x / 172.67.x 这几个段会落 HKG，
-        # 其它段抽到的全是 LAX，所以抽多了只是噪声，1 个/段够做故障兜底。
+        # 候选池：DNS 常只给 3 个 IP，挑不出真正更快的。开启后从 CF 公开网段抽样补充，
+        # 每段抽 discoverPerRange 个。抽多了是噪声，1~2 个/段够做故障兜底。
         discoverEnabled: true
         discoverPerRange: 1
         # 两级测速：候选多时先用 TCP 快速筛（L1），只对最快的 l2TopN 个做完整 HTTP 实测（L2）
         l1Concurrency: 20
         l1TimeoutMs: 1200
         l2TopN: 10
-        # 只保留落在这些边缘节点的 IP（如 ["HKG"]）；留空 = 不限制，只把 colo 记在状态里
+        # 只保留落在这些边缘节点的 IP（如 ["HKG"]、"SIN"）；留空 = 不限制，只把 colo 记在状态里
         coloAllow: []
         # 超过这么久没有真实请求就跳过探测轮次（默认 30 分钟，0 = 永不跳过）
         idleSkipMs: 1800000
@@ -50,6 +52,7 @@
         # direct = 不做优选，按系统 DNS 直连（仍经过本地代理，用于排查优选本身的问题）
         # 运行时可用 cf_router_mode 工具或 GET /__router/mode?value= 切换，选择写入 stateFile 并保留
         routingMode: "auto"
+        # 运行时选择的落盘路径，留空则用 $DSH_HOME/cf-router-state.json
         stateFile: ""
         upstreamTimeoutMs: 600000
         verbose: false

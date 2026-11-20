@@ -12,6 +12,14 @@
     "edge-selection"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arstoya/dsh-cf-router.git"
+  },
+  "homepage": "https://github.com/arstoya/dsh-cf-router#readme",
+  "bugs": {
+    "url": "https://github.com/arstoya/dsh-cf-router/issues"
+  },
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",
