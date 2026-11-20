@@ -34,7 +34,9 @@
   ],
   "scripts": {
     "doctor": "node scripts/doctor.mjs",
-    "test": "node scripts/doctor.mjs"
+    "test": "node --import ./test/helpers/stub-register.mjs --test \"test/**/*.test.js\"",
+    "test:unit": "node --import ./test/helpers/stub-register.mjs --test \"test/unit/**/*.test.js\"",
+    "test:integration": "node --import ./test/helpers/stub-register.mjs --test \"test/integration/**/*.test.js\""
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-tools": "*",
