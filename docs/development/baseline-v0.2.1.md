@@ -33,9 +33,9 @@
 
 | 检查 | 结果 |
 |---|---|
-| `npm test` | **68 tests / 68 pass / 0 fail**，约 15 秒（含一个约 9 秒的首字节超时用例） |
+| `npm test` | **79 tests / 79 pass / 0 fail**，约 15 秒（含一个约 9 秒的首字节超时用例） |
 | `npm run doctor` | FAIL 0 · WARN 1 · 17 项（与开工前一致，未被破坏） |
-| 连续三次 `npm test` | 三次均 68/68，结果一致 |
+| 连续三次 `npm test` | 三次均 79/79，结果一致 |
 | 外网依赖 | 无。全部走本地 HTTPS fixture（自签证书） |
 | 真实 API Key | 不需要 |
 | 真实 DSH_HOME 写入 | 无（见 §六 的隔离机制） |
@@ -49,7 +49,8 @@
 | `test/unit/state.test.js` | 9 | 快照结构、DEFAULTS 一致性、测试隔离 |
 | `test/integration/probe.test.js` | 18 | DNS 成败、TCP 成败、TLS 校验、HTTP 200/401/404/429/500/503、超时、重置 |
 | `test/integration/proxy.test.js` | 16 | GET/POST/JSON/SSE/gzip/客户端断开/首字节超时(真实触发)/上游重置/Keep-Alive/direct/控制端点 |
-| **合计** | **68** | |
+| `test/regression/router-race.test.js` | 11 | 旧请求迟到成功/失败、旧探测覆盖、100 并发交错（Issue #2） |
+| **合计** | **79** | |
 
 ---
 
@@ -126,11 +127,19 @@ Issue #2 / #3 会处理其中一部分；未列入的应单独开 issue。
 
 ### 7.1 与 Issue #2 相关
 
-| 问题 | 位置 | 现状 |
+| 问题 | 位置 | 状态 |
 |---|---|---|
-| `noteSuccess()` 直接改 `currentIp` | `noteSuccess` | 旧请求迟到成功会把已经切走的线路改回来 |
-| 无路由版本号 | 全局 | 无法区分「当前路由」与「旧请求持有的路由」 |
-| 探测结果无版本保护 | `refreshHost` | 旧探测晚于新探测完成时会覆盖新结果 |
+| `noteSuccess()` 直接改 `currentIp` | `noteSuccess` | **已修复（Issue #2）**：`recordRequestSuccess` 只更新统计，永不碰路由 |
+| 无路由版本号 | 全局 | **已修复（Issue #2）**：`routeGenerations`，只在真切换时递增 |
+| 探测结果无版本保护 | `refreshHost` | **已修复（Issue #2）**：`probeGenerations` + `commitProbeResult` 丢弃过期结果 |
+
+Issue #2 落地后的契约（`test/regression/router-race.test.js` 守护）：
+
+- `switchRoute()` 是修改当前路由的**唯一入口**；目标与当前相同时不递增、不记切换
+- `recordRequestSuccess()` 签名改为 `(host, ip, metrics, generation)`，**不回写 currentIp**
+- `recordRequestFailure()` 判死照记，但只有「该 IP 仍是当前线路」才触发切换
+- `refreshHost()` 开头 `beginProbe()` 取版本，落库前 `commitProbeResult()` 校验
+- `noteSuccess` / `noteFailure` 保留为薄封装，向后兼容
 
 ### 7.2 与 Issue #3 相关
 
@@ -155,7 +164,7 @@ Issue #2 / #3 会处理其中一部分；未列入的应单独开 issue。
 
 ```bash
 git checkout v0.1.0        # 回到本基准
-npm test                   # 68 tests / 68 pass
+npm test                   # 79 tests / 79 pass
 npm run doctor             # FAIL 0 · WARN 1（端口占用）
 ```
 
