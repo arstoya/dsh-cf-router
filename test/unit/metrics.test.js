@@ -149,10 +149,23 @@ test('10 秒模型推理不会被当成 TLS 网络延迟', () => {
   api.recordRequestSuccess(HOST, '203.0.113.1', { tlsMs: 100, ttfbMs: 10_100, reused: false }, 0)
 
   assertCloseTo(s.metrics.tlsEwmaMs, 100, { label: 'TLS 仍是 100ms' })
-  assert.equal(s.metrics.freshTtfbEwmaMs, null, '10s TTFB 超出 ewmaMaxMs，不该进 EWMA')
-  assert.equal(s.samples.freshTtfb, 0, '被丢弃的样本不计数')
-  // 原始值必须留档，不能因为不进 EWMA 就丢掉
-  assert.equal(s.lastTtfbMs, 10_100, '原始 TTFB 要保留供观察')
+  // 关键：TLS 与 TTFB 是两个指标，不能互相顶替
+  assert.notEqual(s.metrics.freshTtfbEwmaMs, 100, 'TTFB 不能取 TLS 的值')
+  assert.equal(s.lastTtfbMs, 10_100, '原始 TTFB 必须留档')
+})
+
+test('超额 TTFB 样本仍进 EWMA，只额外标记 overCap（不丢原始观测）', () => {
+  setup({ ewmaMaxMs: 3000 })
+  const s = api.statOf(HOST, '203.0.113.1')
+
+  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 10_100, reused: false }, 0)
+
+  assert.equal(s.samples.freshTtfb, 1, '样本必须计入总数')
+  assert.equal(s.samples.freshTtfbOverCap, 1, '同时标记为超额')
+  assertCloseTo(s.metrics.freshTtfbEwmaMs, 10_100, { label: '原始值仍进 EWMA' })
+  assert.equal(s.recentTtfbMs.length, 1, '原始环里应留一条')
+  assert.equal(s.recentTtfbMs[0].ms, 10_100)
+  assert.equal(s.recentTtfbMs[0].source, 'fresh')
 })
 
 test('TLS 快不能把 10 秒 TTFB 伪装成 100ms', () => {
@@ -165,15 +178,17 @@ test('TLS 快不能把 10 秒 TTFB 伪装成 100ms', () => {
   assert.notEqual(score, 100, '评分不能等于 TLS 耗时')
 })
 
-test('ewmaMaxMs 不作用于 TCP 与 TLS（它们不受 prefill 影响）', () => {
+test('ewmaMaxMs 只用于分级，不作用于 TCP/TLS，也不丢弃任何 TTFB', () => {
   setup({ ewmaMaxMs: 200 })
   const s = api.statOf(HOST, '203.0.113.1')
 
   // TLS 800ms 远超 ewmaMaxMs(200)，但它不是 prefill，必须照记
   api.recordRequestSuccess(HOST, '203.0.113.1', { tlsMs: 800, ttfbMs: 900, reused: false }, 0)
 
-  assertCloseTo(s.metrics.tlsEwmaMs, 800, { label: 'TLS 不被 ewmaMaxMs 过滤' })
-  assert.equal(s.metrics.freshTtfbEwmaMs, null, 'TTFB 900 > 200 被过滤')
+  assertCloseTo(s.metrics.tlsEwmaMs, 800, { label: 'TLS 不受阈值影响' })
+  // TTFB 900 > 200：仍进 EWMA，只是被标记
+  assertCloseTo(s.metrics.freshTtfbEwmaMs, 900, { label: 'TTFB 仍入库' })
+  assert.equal(s.samples.freshTtfbOverCap, 1, '被标记为超额')
 })
 
 /* ============================================================
@@ -206,6 +221,37 @@ test('scoreOf 在没有任何探测数据时返回 Infinity', () => {
   assert.equal(api.scoreOf(HOST, '203.0.113.1', api.deps.now()), Infinity)
 })
 
+test('scoreOf：单条超大样本不会把评分拉偏（用原始样本中位数，不用 EWMA）', () => {
+  setup({ ewmaAlpha: 0.5, ewmaMaxMs: 300 })
+  api.state().hosts.set(HOST, {
+    ips: ['203.0.113.1'],
+    results: [{ ip: '203.0.113.1', okCount: 0, samples: 6, ttfbMedian: Infinity, ttfbBest: Infinity, colo: 'HKG', excluded: null }],
+    lastProbeAt: api.deps.now(),
+    error: null,
+  })
+  // 5 条 120ms + 1 条 5000ms（模型 prefill）
+  for (let i = 0; i < 5; i += 1) api.recordProbeSample(HOST, '203.0.113.1', { ttfbMs: 120 })
+  api.recordProbeSample(HOST, '203.0.113.1', { ttfbMs: 5000 })
+
+  const score = api.scoreOf(HOST, '203.0.113.1', api.deps.now())
+  assertCloseTo(score, 120, { label: '评分应是干净样本的中位数' })
+  // EWMA 确实被拉高了，但它不参与评分
+  assert.ok(api.statOf(HOST, '203.0.113.1').metrics.probeTtfbEwmaMs > 500, 'EWMA 保留被污染的事实')
+})
+
+test('scoreOf：全部样本超额时判为不可评分', () => {
+  setup({ ewmaMaxMs: 300 })
+  api.state().hosts.set(HOST, {
+    ips: ['203.0.113.1'],
+    results: [{ ip: '203.0.113.1', okCount: 0, samples: 3, ttfbMedian: Infinity, ttfbBest: Infinity, colo: 'HKG', excluded: null }],
+    lastProbeAt: api.deps.now(),
+    error: null,
+  })
+  for (let i = 0; i < 3; i += 1) api.recordProbeSample(HOST, '203.0.113.1', { ttfbMs: 5000 })
+
+  assert.equal(api.scoreOf(HOST, '203.0.113.1', api.deps.now()), Infinity, '没有干净样本时不可评分')
+})
+
 test('scoreOf 对冷却中的 IP 仍返回 Infinity', () => {
   const clock = setup()
   seed([{ ip: '203.0.113.1', ttfb: 100 }])
@@ -229,14 +275,32 @@ test('statusSnapshot 每个候选暴露六个独立指标与计数', () => {
   for (const k of ['tcpEwmaMs', 'tlsEwmaMs', 'probeTtfbEwmaMs', 'probeTotalEwmaMs', 'freshTtfbEwmaMs', 'reusedTtfbEwmaMs']) {
     assert.ok(k in cand.metrics, `候选缺 metrics.${k}`)
   }
-  for (const k of ['tcp', 'tls', 'probeTtfb', 'probeTotal', 'freshTtfb', 'reusedTtfb']) {
+  for (const k of ['tcp', 'tls', 'probeTtfb', 'probeTotal', 'freshTtfb', 'reusedTtfb', 'probeTtfbOverCap']) {
     assert.ok(k in cand.samples, `候选缺 samples.${k}`)
   }
+  assert.ok(Array.isArray(cand.recentTtfbMs), '候选应暴露原始 TTFB 环')
 
   assertCloseTo(cand.metrics.tcpEwmaMs, 10)
   assertCloseTo(cand.metrics.probeTtfbEwmaMs, 150)
   assertCloseTo(cand.metrics.reusedTtfbEwmaMs, 200)
   assert.equal(cand.metrics.freshTtfbEwmaMs, null, '没有新连接样本时应为 null')
+})
+
+test('原始 TTFB 环：保留最近 20 条，区分 probe / fresh / reused', () => {
+  setup()
+  const s = api.statOf(HOST, '203.0.113.1')
+
+  api.recordProbeSample(HOST, '203.0.113.1', { ttfbMs: 50 })
+  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 60, reused: false }, 0)
+  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 40, reused: true }, 0)
+
+  assert.deepEqual(s.recentTtfbMs.map((r) => r.source), ['probe', 'fresh', 'reused'])
+  assert.deepEqual(s.recentTtfbMs.map((r) => r.ms), [50, 60, 40])
+
+  // 灌满超过 20 条，只保留最后 20
+  for (let i = 0; i < 30; i += 1) api.recordProbeSample(HOST, '203.0.113.1', { ttfbMs: 100 + i })
+  assert.equal(s.recentTtfbMs.length, 20, '环容量应为 20')
+  assert.equal(s.recentTtfbMs.at(-1).ms, 129)
 })
 
 test('statusSnapshot 无样本时全部为 null，不伪造默认值', () => {

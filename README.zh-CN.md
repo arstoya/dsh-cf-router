@@ -85,7 +85,7 @@ node scripts/doctor.mjs
 | `idleSkipMs` | `1800000` | 空闲这么久就跳过探测轮次（`0` = 永不跳过） |
 | `maxSockets` / `keepAlive` | `16` / `true` | 连接复用 |
 | `failThreshold` / `cooldownMs` | `2` / `60000` | 连续失败几次判死、冷却多久 |
-| `ewmaAlpha` / `ewmaMaxMs` | `0.3` / `3000` | EWMA 权重；上限**只作用于 TTFB 类样本** —— TCP/TLS 是纯网络指标，不过滤，因为只有 TTFB 会被 prompt prefill 污染 |
+| `ewmaAlpha` / `ewmaMaxMs` | `0.3` / `3000` | EWMA 权重。`ewmaMaxMs` 是**分级阈值，不是过滤器**：超额样本照样记录、照样进 EWMA，只是额外计入 `*OverCap` 计数，让评分层自己判断数据质量 |
 | `firstByteTimeoutMs` | `60000` | 上游迟迟不给首字节就放弃 |
 | `upstreamTimeoutMs` | `600000` | 上游整体超时（长推理要放宽） |
 | `allowDirectFallback` | `true` | 所有候选都在冷却时退回普通 DNS 连接 |
@@ -128,7 +128,11 @@ v0.2.1 起每个候选上报六个独立 EWMA。每一个都只由一对明确�
 | `freshTtfbEwmaMs` | 请求发出 | 收到响应头 | 真实请求，新连接 |
 | `reusedTtfbEwmaMs` | 请求发出 | 收到响应头 | 真实请求，复用连接 |
 
-`samples` 记录每个 EWMA 采纳了多少个样本。**路由评分只用 `probeTtfbMs`** —— TCP/TLS 是建连成本，真实请求 TTFB 会被模型 prefill 拉偏，两者都不参与排序。
+`samples` 记录每个 EWMA 收到多少样本，另有 `<指标>OverCap` 计数记录超出 `ewmaMaxMs` 的条数。
+
+**任何原始观测都不会被丢弃。** 每条 TTFB 都进 EWMA，同时进一个 20 条的 `recentTtfbMs` 环形记录（带 `source: probe | fresh | reused`），用来分辨「稳定的慢」和「偶尔被一个大 prompt 拖慢」。大 TTFB 是信号，不是垃圾 —— 一个真的要 10 秒才吐首字的上游，那是这条线路的真实属性。
+
+**路由评分只用 `probeTtfbMs`** —— TCP/TLS 是建连成本，真实请求 TTFB 会被模型 prefill 拉偏。当没有探测中位数时，评分取**原始环里干净样本的中位数**，而不是 EWMA：否则一条 5000ms 尖刺就能把 120ms 的线路拉到 2500ms。若全部样本都超额，该线路判为不可评分（`null`），而不是拿被污染的数据去排序。
 
 两处兼容性说明：
 

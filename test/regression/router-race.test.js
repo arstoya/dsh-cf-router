@@ -128,6 +128,68 @@ test('场景 B：旧请求迟到失败不会把非当前线路重新设为当前
   assert.ok(api.statOf(HOST, '203.0.113.1').penaltyUntil > clock.now(), 'A 仍应被判死冷却')
 })
 
+test('场景 B2：A→B→A 之后，带过期 generation 的失败不能驱动切换', () => {
+  // 这条是 generation 作为「第二道保护」的用武之地：
+  // 光看「该 IP 是否仍是当前线路」判断不出来 —— A 走了又回来，IP 比对会认为「还是当前」。
+  // 但那个请求代表的是更早一轮的观测，不该用来否决之后的新决策。
+  const { clock } = setup({ failThreshold: 2 })
+  seed([
+    { ip: '203.0.113.1', median: 100 },
+    { ip: '203.0.113.2', median: 300 },
+  ])
+
+  api.switchRoute(HOST, '203.0.113.1', 'initial')      // gen 1
+  const genOld = api.getRouteGeneration(HOST)
+
+  api.switchRoute(HOST, '203.0.113.2', 'probe:better')  // gen 2
+  api.switchRoute(HOST, '203.0.113.1', 'probe:back')    // gen 3，回到 A
+
+  assert.equal(api.state().currentIp.get(HOST), '203.0.113.1', '路由已回到 A')
+  const genNow = api.getRouteGeneration(HOST)
+  const failBefore = api.statOf(HOST, '203.0.113.1').fail
+  const switchesBefore = api.state().switches.length
+
+  // 带 gen=1 的旧失败，即使「IP 是当前线路」也必须只记统计、不切换
+  api.recordRequestFailure(HOST, '203.0.113.1', { message: 'stale', kind: 'error' }, genOld)
+  api.recordRequestFailure(HOST, '203.0.113.1', { message: 'stale', kind: 'error' }, genOld)
+
+  assert.equal(api.getRouteGeneration(HOST), genNow, '路由不该被旧请求驱动')
+  assert.equal(api.state().switches.length, switchesBefore, '不该产生新的切换记录')
+  assert.equal(api.state().currentIp.get(HOST), '203.0.113.1', '路由仍是 A')
+  assert.equal(api.statOf(HOST, '203.0.113.1').fail, failBefore + 2, '失败统计仍要记')
+  assert.ok(api.statOf(HOST, '203.0.113.1').penaltyUntil > clock.now(), 'A 仍应被判死冷却')
+})
+
+test('场景 B3：当前 generation 的失败可以正常驱动切换', () => {
+  setup({ failThreshold: 2 })
+  seed([
+    { ip: '203.0.113.1', median: 100 },
+    { ip: '203.0.113.2', median: 300 },
+  ])
+  api.switchRoute(HOST, '203.0.113.1', 'initial')
+  const gen = api.getRouteGeneration(HOST)
+
+  api.recordRequestFailure(HOST, '203.0.113.1', { message: 'real', kind: 'error' }, gen)
+  api.recordRequestFailure(HOST, '203.0.113.1', { message: 'real', kind: 'error' }, gen)
+
+  assert.equal(api.state().currentIp.get(HOST), '203.0.113.2', '当前版本的失败应能触发切换')
+})
+
+test('结构性优先：即使 generation 匹配，成功回调依然不能改路由', () => {
+  // 第一道保护（回调无权写 currentIp）与第二道（版本）是两件事。
+  // 这条用例证明：把 generation 给成「完全正确」的值，成功回调照样改不了路由。
+  setup()
+  seed([
+    { ip: '203.0.113.1', median: 100 },
+    { ip: '203.0.113.2', median: 200 },
+  ])
+  api.switchRoute(HOST, '203.0.113.2', 'initial')
+
+  api.recordRequestSuccess(HOST, '203.0.113.1', { ttfbMs: 30, reused: false }, api.getRouteGeneration(HOST))
+
+  assert.equal(api.state().currentIp.get(HOST), '203.0.113.2', '成功回调无论如何都不改路由')
+})
+
 /* ============================================================
  * 场景 C：旧探测任务迟到
  * ============================================================ */
@@ -177,7 +239,7 @@ test('场景 C2：同代探测正常提交', () => {
  * 场景 D：100 并发交错
  * ============================================================ */
 
-test('场景 D：100 个并发请求交错返回，路由始终符合最新有效决策', async () => {
+test('场景 D：100 个并发交错 —— 旧请求不许改路由，新请求负责自愈', async () => {
   const { clock } = setup({ failThreshold: 2 })
 
   const IPS = ['203.0.113.1', '203.0.113.2', '203.0.113.3']
@@ -185,7 +247,7 @@ test('场景 D：100 个并发请求交错返回，路由始终符合最新有�
 
   api.switchRoute(HOST, IPS[0], 'initial')
 
-  // 每个请求在开始时快照 {ip, generation}
+  // 100 个请求全部在「切换发生之前」出发，因此携带旧 generation
   const inflight = []
   for (let i = 0; i < 100; i += 1) {
     inflight.push({
@@ -196,8 +258,9 @@ test('场景 D：100 个并发请求交错返回，路由始终符合最新有�
       error: { message: `err-${i}`, kind: 'error' },
     })
   }
+  assert.equal(new Set(inflight.map((r) => r.generation)).size, 1, '这批请求应共享同一个旧 generation')
 
-  // 先让 1 号 IP 彻底判死（模拟「已经被切走」）
+  // 1 号 IP 判死并切走（这两次用的是「当前」generation，有权切换）
   api.recordRequestFailure(HOST, IPS[0], { message: 'dead', kind: 'error' }, api.getRouteGeneration(HOST))
   api.recordRequestFailure(HOST, IPS[0], { message: 'dead', kind: 'error' }, api.getRouteGeneration(HOST))
 
@@ -205,42 +268,48 @@ test('场景 D：100 个并发请求交错返回，路由始终符合最新有�
   const genAfterFailover = api.getRouteGeneration(HOST)
   assert.notEqual(routeAfterFailover, IPS[0], '1 号已判死，路由应已离开它')
 
-  // 交错完成所有在飞请求
-  const shuffled = inflight.sort(() => Math.random() - 0.5)
-  for (const r of shuffled) {
-    if (r.ok) api.recordRequestSuccess(HOST, r.ip, { ttfbMs: r.ttfbMs }, r.generation)
+  const switchesAfterFailover = api.state().switches.length
+
+  // 交错完成所有在飞请求（全部是旧 generation）
+  for (const r of inflight.sort(() => Math.random() - 0.5)) {
+    if (r.ok) api.recordRequestSuccess(HOST, r.ip, { ttfbMs: r.ttfbMs, reused: false }, r.generation)
     else api.recordRequestFailure(HOST, r.ip, r.error, r.generation)
   }
 
-  const finalRoute = api.state().currentIp.get(HOST) || null
-  const finalGen = api.getRouteGeneration(HOST)
+  // 断言 1：路由没有被这批旧请求改动过
+  assert.equal(api.statOf(HOST, IPS[0]).ok > 0, true, '旧 IP 的统计仍要更新')
+  assert.equal(
+    api.state().switches.length,
+    switchesAfterFailover,
+    '旧 generation 的请求一律不得产生新的切换记录',
+  )
 
-  // 断言 1：路由不是已判死的 1 号（这是本 issue 要修的核心）
-  assert.notEqual(finalRoute, IPS[0], '已判死的 IP 不能因为迟到成功重新成为当前线路')
+  // 断言 2：generation 不变（没有切换发生）
+  assert.equal(api.getRouteGeneration(HOST), genAfterFailover, 'generation 不该因旧请求变化')
 
-  // 断言 2：路由要么是某个候选，要么是 null（全部冷却时合法）
-  //   100 个失败足以让三个候选全部判死，此时 null 是正确结果，不是缺陷
-  assert.ok(finalRoute === null || IPS.includes(finalRoute), `路由应为候选之一或 null，实际 ${finalRoute}`)
+  // 断言 3：全部候选都被这批失败打进了冷却（这是正确行为 —— 统计反映事实）
+  const cooling = IPS.filter((ip) => api.statOf(HOST, ip).penaltyUntil > clock.now())
+  assert.ok(cooling.length >= 1, '至少一个 IP 进入冷却')
 
-  // 断言 3：如果还有路由，它绝不能是冷却中的节点
-  if (finalRoute !== null) {
-    assert.ok(
-      api.statOf(HOST, finalRoute).penaltyUntil <= clock.now(),
-      `当前线路不能是冷却中的节点，实际 ${finalRoute}`,
-    )
+  // 断言 4：自愈 —— 下一个「新」请求（当前 generation）有权离开冷却节点
+  const freshGen = api.getRouteGeneration(HOST)
+  const currentNow = api.state().currentIp.get(HOST)
+  const stillCooling = currentNow && api.statOf(HOST, currentNow).penaltyUntil > clock.now()
+  if (stillCooling) {
+    const next = api.chooseBest(HOST, currentNow)
+    if (next) {
+      api.switchRoute(HOST, next.ip, 'request:penalized')
+      assert.notEqual(api.state().currentIp.get(HOST), currentNow, '新请求应能离开冷却节点')
+      assert.ok(api.getRouteGeneration(HOST) > freshGen, '自愈切换应递增 generation')
+    }
   }
 
-  // 断言 4：generation 单调不减
-  assert.ok(finalGen >= genAfterFailover, 'generation 不能倒退')
-
-  // 断言 5：generation 必须等于真实切换次数（二者脱节就说明有绕过 switchRoute 的写点）
-  const realSwitches = api.state().switches.length
-  assert.equal(finalGen, realSwitches, 'generation 应等于实际切换次数')
-  assert.ok(realSwitches >= 1, '至少发生过一次切换')
-
-  // 断言 6：不存在「因为成功回调而切换」的记录 —— 成功永远不该改路由
+  // 断言 5：不存在「因为成功回调而切换」的记录
   const successSwitches = api.state().switches.filter((s) => String(s.reason).startsWith('success'))
   assert.deepEqual(successSwitches, [], '成功回调不得产生任何切换记录')
+
+  // 断言 6：generation 与切换次数始终一致
+  assert.equal(api.getRouteGeneration(HOST), api.state().switches.length, 'generation 应等于实际切换次数')
 })
 
 /* ============================================================

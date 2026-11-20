@@ -33,9 +33,9 @@
 
 | 检查 | 结果 |
 |---|---|
-| `npm test` | **99 tests / 99 pass / 0 fail**，约 17 秒（含一个约 9 秒的首字节超时用例） |
+| `npm test` | **106 tests / 106 pass / 0 fail**，约 18 秒（含一个约 9 秒的首字节超时用例） |
 | `npm run doctor` | FAIL 0 · WARN 1 · 17 项（与开工前一致，未被破坏） |
-| 连续三次 `npm test` | 三次均 99/99，结果一致 |
+| 连续三次 `npm test` | 三次均 106/106，结果一致 |
 | 外网依赖 | 无。全部走本地 HTTPS fixture（自签证书） |
 | 真实 API Key | 不需要 |
 | 真实 DSH_HOME 写入 | 无（见 §六 的隔离机制） |
@@ -51,7 +51,7 @@
 | `test/integration/proxy.test.js` | 16 | GET/POST/JSON/SSE/gzip/客户端断开/首字节超时(真实触发)/上游重置/Keep-Alive/direct/控制端点 |
 | `test/regression/router-race.test.js` | 11 | 旧请求迟到成功/失败、旧探测覆盖、100 并发交错（Issue #2） |
 | `test/integration/probe-metrics.test.js` | 15 | 四段计时边界、状态码、超时/中断/重置、measureIp 聚合（Issue #3） |
-| **合计** | **99** | |
+| **合计** | **106** | |
 
 ---
 
@@ -178,11 +178,46 @@ Issue #3 落地后的指标契约（`test/unit/metrics.test.js` 与
 
 ---
 
+## 七点五、两条设计原则（评审后补强）
+
+### 1. 路由保护是「结构性禁止」优先，版本号只是第二道
+
+Issue #2 的核心不是 generation，而是**请求回调本来就没有写 `currentIp` 的权限**：
+
+- `recordRequestSuccess()` 只更新统计与指标，签名里带 `generation` 但**不参与任何判断**（`void generation`）。
+- 所有路由变更必须经 `switchRoute()` 显式发起。
+- `generation` 的第二道作用在失败路径：请求出发时的版本若已过期，说明它在飞行期间线路被改过，它只能更新统计，无权驱动切换。典型场景是 **A→B→A** —— 光比「该 IP 是否仍是当前线路」会认为「还是当前」，但这个请求代表的是更早一轮的观测。
+
+`test/regression/router-race.test.js` 里三条用例分别锁定：
+- 「结构性优先」：generation 给成完全正确的值，成功回调照样改不了路由
+- 「A→B→A 后过期失败不切换」：IP 比对通过但版本过期，仍不得切换
+- 「当前版本的失败可正常驱动切换」：确认兜底没有把正常路径也堵死
+
+### 2. TTFB 不做丢弃式过滤
+
+`ewmaMaxMs` 的语义是**分级阈值，不是过滤器**：
+
+- 超额样本**照样记录**、照样进 EWMA
+- 只是额外计入 `samples.*OverCap` 计数
+- 原始值进 20 条的 `recentTtfbMs` 环（带 `source` 标记）
+- 是否「因为被 prefill 污染而降低权重」由**评分层**决定，采集层不做丢弃决定
+
+评分层的处理方式：取原始环里**干净样本的中位数**，而不是 EWMA。实测对比（5×120ms + 1×5000ms）：
+
+| 指标 | 值 |
+|---|---|
+| EWMA（含污染，保留事实） | 2560 ms |
+| 评分（干净样本中位数） | 120 ms |
+
+用 EWMA 会让这条 120ms 的线路被单条尖刺拉到 2560ms 而误判。若全部样本都超额，该线路判为不可评分（`Infinity`），而不是拿被污染的数据排序。
+
+---
+
 ## 八、复现方式
 
 ```bash
 git checkout v0.1.0        # 回到本基准
-npm test                   # 99 tests / 99 pass
+npm test                   # 106 tests / 106 pass
 npm run doctor             # FAIL 0 · WARN 1（端口占用）
 ```
 

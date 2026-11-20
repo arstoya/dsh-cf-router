@@ -85,7 +85,7 @@ Copy the block from [`cordis.patch.yml`](cordis.patch.yml) into your profile's p
 | `idleSkipMs` | `1800000` | Skip probe rounds when idle this long (`0` = never skip) |
 | `maxSockets` / `keepAlive` | `16` / `true` | Connection reuse |
 | `failThreshold` / `cooldownMs` | `2` / `60000` | Failures before an IP is dropped, and how long it stays out |
-| `ewmaAlpha` / `ewmaMaxMs` | `0.3` / `3000` | EWMA weight, and the cap applied to **TTFB samples only** — TCP/TLS are pure-network and never filtered, because only TTFB can be polluted by prompt prefill |
+| `ewmaAlpha` / `ewmaMaxMs` | `0.3` / `3000` | EWMA weight. `ewmaMaxMs` is a **classification threshold, not a filter**: samples above it are still recorded and still feed the EWMA, they are only counted separately (`*OverCap`) so the scoring layer can judge data quality |
 | `firstByteTimeoutMs` | `60000` | Give up on an upstream that sends no first byte |
 | `upstreamTimeoutMs` | `600000` | Overall upstream timeout (raise for long reasoning) |
 | `allowDirectFallback` | `true` | Fall back to plain DNS when every candidate is cooling down |
@@ -128,7 +128,11 @@ Since v0.2.1 each candidate reports six independent EWMA values. Every one of th
 | `freshTtfbEwmaMs` | request sent | response headers | real request, new connection |
 | `reusedTtfbEwmaMs` | request sent | response headers | real request, reused connection |
 
-`samples` counts how many accepted samples fed each EWMA. Routing score uses **`probeTtfbMs` only** — TCP/TLS are connection-establishment cost, and real-request TTFB is skewed by model prefill, so neither participates in ranking.
+`samples` counts how many samples fed each EWMA, plus `<metric>OverCap` counters for samples exceeding `ewmaMaxMs`.
+
+**No raw observation is ever discarded.** Every TTFB value goes into its EWMA and into a 20-entry `recentTtfbMs` ring (with `source: probe | fresh | reused`), so you can tell "consistently slow" from "one big prompt". Large TTFB is a signal, not garbage — a model that genuinely takes 10s to start producing tokens is a real property of that route.
+
+Routing score uses **`probeTtfbMs` only** — TCP/TLS are connection-establishment cost, and real-request TTFB is skewed by model prefill. When no probe median exists, the score is computed from the **median of clean samples in the raw ring**, not from the EWMA: a single 5000 ms outlier would otherwise drag a 120 ms line to ~2500 ms. If every sample is over-cap, the route is marked unscoreable (`null` score) rather than ranked on polluted data.
 
 Two compatibility notes:
 
