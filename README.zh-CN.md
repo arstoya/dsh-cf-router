@@ -285,6 +285,10 @@ curl -X POST -H 'content-type: application/json'      -H "Authorization: Bearer 
 
 SSE 额外加 `x-accel-buffering: no`、缺省补 `cache-control: no-cache`、并 `setNoDelay` —— 否则事件会攒批到达而不是边产生边发。
 
+## 版本
+
+`0.2.1` —— 变更与升级注意事项见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 局限
 
 - 只做 IPv4 边缘优选。不碰系统网络栈、不改 `hosts`、不动前缀策略。

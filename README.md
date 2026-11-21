@@ -285,6 +285,10 @@ The proxy sits between the client and the upstream, so it has to respect the **e
 
 SSE additionally gets `x-accel-buffering: no`, `cache-control: no-cache` when absent, and `setNoDelay` — otherwise events arrive in batches instead of as they are produced.
 
+## Version
+
+`0.2.1` — see [CHANGELOG.md](CHANGELOG.md) for what changed and what breaks on upgrade.
+
 ## Limits
 
 - IPv4 edge selection only. It does not touch the system network stack, `hosts`, or prefix policy.
