@@ -269,6 +269,20 @@ Three layers guard the endpoints:
 
 In-process DSH tool calls (`cf_router_*`) do not go through HTTP and are not affected by any of this.
 
+## State file
+
+`routingMode` persists to a state file so the choice survives a restart. The file carries a **schema version** separate from the package version — added fields do not bump it, structural changes do.
+
+| Behaviour | Detail |
+| --- | --- |
+| Atomic writes | Written to a temp file then renamed. A crash mid-write cannot leave a half-parsed JSON that loses your routing mode |
+| Read-time migration | Migration is a pure function applied on read; the original file is **not** rewritten. Downgrading to an older plugin version still finds a readable file |
+| Unknown fields | Preserved. If you hand-edit extra keys into the file, they survive a rewrite |
+| Corrupt file | Startup proceeds on the configured value; the damaged file is left untouched for inspection |
+| Newer schema | If the file declares a version this build does not know, it is **not migrated and not overwritten** — the configured value is used instead |
+
+`statusSnapshot().stateSchema` reports the version this build speaks, the version actually loaded, and the path.
+
 ## Route switching hysteresis
 
 Picking a new route is not just "whoever has the lowest number this round". A single probe is one observation; comparing two of them is comparing two draws of luck. Four gates, in order:
