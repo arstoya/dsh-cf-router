@@ -241,7 +241,33 @@ curl -X POST -H 'content-type: application/json'      -d '{"mode":"direct"}' htt
 | 415 | `unsupported_media_type` | 带了非 JSON 的 `Content-Type` |
 | 401 / 403 | `unauthorized` / `forbidden` | 为鉴权层保留（Issue #8） |
 
-**这些端点目前尚未鉴权**（Issue #8）。请只监听回环地址。默认不再发送 `Access-Control-Allow-Origin`；确需跨源浏览器访问时配置 `corsAllowOrigin`。
+### 管理接口鉴权
+
+修改型端点需要 Bearer Token：
+
+```bash
+node scripts/generate-admin-token.mjs --write /仓库外的路径/admin.token
+# 然后在 profile patch 里：
+#   adminTokenFile: /仓库外的路径/admin.token
+
+curl -X POST -H 'content-type: application/json'      -H "Authorization: Bearer $(cat /仓库外的路径/admin.token)"      -d '{"mode":"direct"}' http://127.0.0.1:8787/__router/mode
+```
+
+**不要把这个 Token 写进 `cordis.patch.yml`。** 用 `adminTokenFile` 指向仓库外的文件。只有在文件未被版本控制且你清楚风险时，才直接填 `adminToken`。Token 用 `crypto.timingSafeEqual` 比较，且**不会**出现在日志、错误信息或 `/__router/status` 里。
+
+**安全默认：没配 Token 时修改型端点直接禁用**（`403 admin_token_not_configured`），不是静默开放。`allowUnauthenticatedLocalAdmin: true` 是受信开发机上的显式逃生舱。
+
+只读端点（`/status`、`/mode`）默认开放，因为 DSH 工具与监控需要读；要一并保护就设 `adminProtectStatus: true`。
+
+三层防护：
+
+| 层 | 行为 | 为什么 |
+| --- | --- | --- |
+| `Host` | 监听回环时只接受回环/本机 Host | 挡 DNS rebinding：攻击者域名解析到 127.0.0.1，但它的 `Host` 仍自带攻击者域名 |
+| `Origin` | 任何浏览器来源都拒绝，除非列在 `adminAllowedOrigins` | 挡住「你恰好开着的某个网页」发起的跨站调用。**不带** `Origin` 的请求（curl / DSH / 服务端脚本）不受影响 —— 它们的凭据是 Token |
+| 频率限制 | `adminRateWindowMs` 窗口内 `adminRateLimit` 次，按来源 **与读写** 分桶 | 挡住跑飞的脚本，又不会误锁正常操作：狂打写接口不影响读 |
+
+进程内的 DSH 工具调用（`cf_router_*`）不经过 HTTP，不受以上任何一条影响。
 
 ## 局限
 

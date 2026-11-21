@@ -27,6 +27,8 @@ const api = mod.__testApi
 const HOST = 'localhost'
 
 /** 起代理；返回 { port } */
+const TEST_TOKEN = 'test-admin-token-0123456789'
+
 async function boot(overrides = {}) {
   const listenPort = await freePort()
   setupPlugin({
@@ -34,12 +36,19 @@ async function boot(overrides = {}) {
     listenHost: '127.0.0.1',
     listenPort,
     allowPrivateTargets: true,
+    // Issue #8 之后修改型接口必须带 Token。这里注入一个测试用 Token，
+    // 好让本文件专注于 #7 的方法语义与请求校验。
+    adminToken: TEST_TOKEN,
+    // 限流放宽，避免用例互相触发 429（限流本身在 security/admin-auth.test.js 里单独测）
+    adminRateLimit: 10000,
     ...overrides,
   })
   const server = api.createProxy()
   await new Promise((r) => server.once('listening', r))
   return { port: server.address().port }
 }
+
+const AUTH = { authorization: `Bearer ${TEST_TOKEN}` }
 
 /** 原始请求，返回 { status, headers, body, json } */
 function req(port, { method = 'GET', path = '/', headers = {}, body = null } = {}) {
@@ -64,7 +73,7 @@ function postJson(port, path, obj, headers = {}) {
   return req(port, {
     method: 'POST',
     path,
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', ...AUTH, ...headers },
     body: obj == null ? '' : JSON.stringify(obj),
   })
 }
@@ -103,7 +112,7 @@ test('POST /mode 改模式并持久化', async () => {
 
 test('POST /probe 允许空 body', async () => {
   const { port } = await boot()
-  const r = await req(port, { method: 'POST', path: '/__router/probe' })
+  const r = await req(port, { method: 'POST', path: '/__router/probe', headers: AUTH })
   assert.equal(r.status, 200, '空 body 应被接受')
   assert.equal(r.json.ok, true)
 })
@@ -111,7 +120,7 @@ test('POST /probe 允许空 body', async () => {
 test('POST /reset 允许空 body，清运行时统计', async () => {
   const { port } = await boot()
   api.state().stats.requests = 42
-  const r = await req(port, { method: 'POST', path: '/__router/reset' })
+  const r = await req(port, { method: 'POST', path: '/__router/reset', headers: AUTH })
   assert.equal(r.status, 200)
   assert.equal(r.json.ok, true)
   assert.equal(api.state().stats.requests, 0, '运行时统计应被清空')
@@ -127,7 +136,7 @@ test('POST /reset-mode 只清持久化模式，不动运行时统计', async () 
   const { port } = await boot({ stateFile })
   api.state().stats.requests = 7
 
-  const r = await req(port, { method: 'POST', path: '/__router/reset-mode' })
+  const r = await req(port, { method: 'POST', path: '/__router/reset-mode', headers: AUTH })
   assert.equal(r.status, 200)
   assert.equal(r.json.ok, true)
 
@@ -142,7 +151,7 @@ test('POST /reset 不修改持久化 routingMode', async () => {
   const { port } = await boot({ stateFile })
   await postJson(port, '/__router/mode', { mode: 'direct' })
 
-  const r = await req(port, { method: 'POST', path: '/__router/reset' })
+  const r = await req(port, { method: 'POST', path: '/__router/reset', headers: AUTH })
   assert.equal(r.status, 200)
 
   const after = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
@@ -217,7 +226,7 @@ test('非法 JSON → invalid_json', async () => {
   const bad = await req(port, {
     method: 'POST',
     path: '/__router/mode',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...AUTH },
     body: '{ not json',
   })
   assert.equal(bad.status, 400)
@@ -229,7 +238,7 @@ test('空 body 在 /mode 上 → missing_field', async () => {
   const r = await req(port, {
     method: 'POST',
     path: '/__router/mode',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...AUTH },
   })
   assert.equal(r.status, 400)
   assert.equal(r.json.error, 'missing_field')
@@ -267,7 +276,7 @@ test('Content-Type 不支持 → 415 unsupported_media_type', async () => {
   const r = await req(port, {
     method: 'POST',
     path: '/__router/mode',
-    headers: { 'content-type': 'text/plain' },
+    headers: { 'content-type': 'text/plain', ...AUTH },
     body: '{"mode":"direct"}',
   })
   assert.equal(r.status, 415)
@@ -278,10 +287,10 @@ test('所有错误响应结构一致：ok=false + error + message', async () => 
   const { port } = await boot()
   const samples = [
     await req(port, { path: '/__router/probe' }),                                  // 405
-    await req(port, { method: 'POST', path: '/__router/mode' }),                    // 400 missing
+    await req(port, { method: 'POST', path: '/__router/mode', headers: AUTH }),       // 400 missing
     await postJson(port, '/__router/mode', { mode: 'nope' }),                       // 400 invalid
     await postJson(port, '/__router/mode', { junk: 1 }),                            // 400 unknown/missing
-    await req(port, { method: 'POST', path: '/__router/mode', headers: { 'content-type': 'text/plain' }, body: 'x' }), // 415
+    await req(port, { method: 'POST', path: '/__router/mode', headers: { 'content-type': 'text/plain', ...AUTH }, body: 'x' }), // 415
   ]
   for (const r of samples) {
     assert.equal(r.json.ok, false, `${r.status} 应 ok=false`)
@@ -295,7 +304,7 @@ test('POST 请求体上限：超大 body 被拒', async () => {
   const r = await req(port, {
     method: 'POST',
     path: '/__router/reset',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...AUTH },
     body: 'x'.repeat(80 * 1024),
   })
   assert.equal(r.status, 413)

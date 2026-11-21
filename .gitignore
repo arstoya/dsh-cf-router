@@ -17,3 +17,8 @@ desktop.ini
 # 临时
 tmp/
 *.tmp
+
+# 管理接口 Token（Issue #8）：绝不入库
+*.token
+admin-token*
+admin.token

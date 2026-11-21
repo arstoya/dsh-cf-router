@@ -69,7 +69,21 @@
         # 默认不再发送 Access-Control-Allow-Origin（避免任意网页跨站调用管理接口）。
         # 确需跨源浏览器访问时在此填单个来源，例如 "https://example.com"。
         corsAllowOrigin: ""
-        # ⚠ 管理接口尚未鉴权（Issue #8），请只监听回环地址。
+        # 管理接口鉴权（Issue #8）。修改型端点必须带 Bearer Token。
+        # ⚠ 不要把 Token 直接写在这里（会进版本库）。用 adminTokenFile 指向仓库外的文件：
+        #     node scripts/generate-admin-token.mjs --write /path/outside/repo/admin.token
+        adminTokenFile: ""
+        # 只有在文件未被版本控制且你清楚风险时才直接填这里。
+        adminToken: ""
+        # 只读端点（/status、/mode）默认开放供 DSH 工具与监控使用；要一并保护就设 true。
+        adminProtectStatus: false
+        # 允许跨源调用管理接口的 Origin 白名单，默认空 = 拒绝任何带 Origin 的跨源请求。
+        adminAllowedOrigins: []
+        # 限流：窗口内请求数（按来源与读写分桶，狂打写接口不影响读）
+        adminRateLimit: 30
+        adminRateWindowMs: 60000
+        # 逃生舱：未配 Token 时仍允许回环来源修改状态。默认 false（安全默认）。
+        allowUnauthenticatedLocalAdmin: false
         # auto   = 优选最快的 IPv4，失败自动切换（默认）
         # direct = 不做优选，按系统 DNS 直连（仍经过本地代理，用于排查优选本身的问题）
         # 运行时可用 cf_router_mode 工具或 GET /__router/mode?value= 切换，选择写入 stateFile 并保留

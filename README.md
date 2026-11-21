@@ -241,7 +241,33 @@ Error responses share one shape:
 | 415 | `unsupported_media_type` | body sent with a non-JSON `Content-Type` |
 | 401 / 403 | `unauthorized` / `forbidden` | reserved for the auth layer (Issue #8) |
 
-**These endpoints are not authenticated yet** (Issue #8). Listen on loopback only. There is no unconditional `Access-Control-Allow-Origin`; set `corsAllowOrigin` if you really need cross-origin browser access.
+### Admin authentication
+
+Mutating endpoints require a Bearer token:
+
+```bash
+node scripts/generate-admin-token.mjs --write /path/outside/repo/admin.token
+# then in your profile patch:
+#   adminTokenFile: /path/outside/repo/admin.token
+
+curl -X POST -H 'content-type: application/json'      -H "Authorization: Bearer $(cat /path/outside/repo/admin.token)"      -d '{"mode":"direct"}' http://127.0.0.1:8787/__router/mode
+```
+
+**Do not put the token in `cordis.patch.yml`.** Use `adminTokenFile` pointing outside the repo. Only use `adminToken` directly if the file is untracked and you understand the risk. Tokens are compared with `crypto.timingSafeEqual` and are never echoed in logs, errors, or `/__router/status`.
+
+**Safe default: no token configured means mutating endpoints are disabled** (`403 admin_token_not_configured`). They are not silently open. `allowUnauthenticatedLocalAdmin: true` is an explicit escape hatch for a trusted dev machine.
+
+Read-only endpoints (`/status`, `/mode`) stay open by default because DSH tools and monitoring need them; set `adminProtectStatus: true` to require the token there too.
+
+Three layers guard the endpoints:
+
+| Layer | Behaviour | Why |
+| --- | --- | --- |
+| `Host` | When listening on loopback, only loopback/localhost hosts are accepted | Blocks DNS rebinding: an attacker domain resolving to 127.0.0.1 still sends its own name as `Host` |
+| `Origin` | Any browser origin is refused unless listed in `adminAllowedOrigins` | Blocks cross-site calls from a page you happen to have open. Requests **without** an `Origin` header (curl, DSH, server scripts) are unaffected — their credential is the token |
+| Rate limit | `adminRateLimit` per `adminRateWindowMs`, bucketed per source **and** read/write | Stops a runaway script without locking out valid operations: hammering writes never blocks reads |
+
+In-process DSH tool calls (`cf_router_*`) do not go through HTTP and are not affected by any of this.
 
 ## Limits
 
