@@ -38,6 +38,7 @@ export async function startHttpsUpstream(opts = {}) {
     sse = false,
     sseEvents = ['data: {"delta":"a"}\n\n', 'data: [DONE]\n\n'],
     gzip = false,
+    chunkedWrite = 0,
     abortMidBody = false,
     resetConnection = false,
     port = 0,
@@ -58,15 +59,20 @@ export async function startHttpsUpstream(opts = {}) {
     const record = { method: req.method, url: req.url, headers: req.headers, body: null }
     requests.push(record)
 
-    // res.writableFinished 为 false 就 close，说明客户端在上游写完前断开了。
-    // 这是「代理有没有真的取消上游」的可观测证据：若代理没销毁上游请求，
-    // 它会把响应读完，这里就不会记成 aborted。
+    // 「上游有没有被取消」的判据（三次试错后的总结）：
+    //   1. res.writableFinished —— 一次性 res.end(bigBuffer) 会立刻为 true，
+    //      客户端之后再断开测不出来
+    //   2. res.writableLength   —— 同样是瞬时的，8MB 一次写完立刻归零
+    //   3. res.destroyed        —— 服务端视角，客户端断开时不一定会置位
+    // 真正可靠的信号是**连接是否被对端关闭**：
+    //   客户端读完之前断开 → socket 会 close，且此时请求还没走完
+    let finishedNormally = false
+    res.on('finish', () => { finishedNormally = true })
+
     res.on('close', () => {
-      if (res.writableFinished) {
-        completedResponses += 1
-      } else {
-        abortedResponses.push({ url: req.url, at: Date.now() })
-      }
+      // 服务端还没 finish 连接就被关了 = 客户端中途断开
+      if (finishedNormally) completedResponses += 1
+      else abortedResponses.push({ url: req.url, at: Date.now() })
     })
 
     await new Promise((r) => req.on('end', r).on('error', r))
@@ -119,6 +125,28 @@ export async function startHttpsUpstream(opts = {}) {
       res.end()
       return
     }
+
+    // chunkedWrite：把响应体拆成 N 块，每块之间等 drain。
+    // 这样在客户端断开时**一定还有未 flush 的数据**，才测得出取消。
+    // 一次性 res.end(8MB) 会被内核瞬间收下，之后再断开就无从观测。
+    if (chunkedWrite) {
+      const total = payload.length
+      const chunkSize = Math.max(64 * 1024, Math.ceil(total / chunkedWrite))
+      let offset = 0
+      while (offset < total) {
+        if (res.destroyed) return
+        const slice = payload.subarray(offset, offset + chunkSize)
+        offset += slice.length
+        const ok = res.write(slice)
+        // 等缓冲区腾出空间再继续 —— 这正是客户端断开时会被打断的地方
+        if (!ok) {
+          await new Promise((r) => { res.once('drain', r); res.once('close', r) })
+        }
+      }
+      if (!res.destroyed) res.end()
+      return
+    }
+
     res.end(payload)
   })
 

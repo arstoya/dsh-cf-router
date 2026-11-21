@@ -33,7 +33,7 @@
 
 | 检查 | 结果 |
 |---|---|
-| `npm test` | **106 tests / 106 pass / 0 fail**，约 18 秒（含一个约 9 秒的首字节超时用例） |
+| `npm test` | **220 tests / 220 pass / 0 fail**，约 30 秒（含首字节超时与 8MB 取消用例） |
 | `npm run doctor` | FAIL 0 · WARN 1 · 17 项（与开工前一致，未被破坏） |
 | 连续三次 `npm test` | 三次均 106/106，结果一致 |
 | 外网依赖 | 无。全部走本地 HTTPS fixture（自签证书） |
@@ -178,34 +178,6 @@ Issue #3 落地后的指标契约（`test/unit/metrics.test.js` 与
 
 ---
 
-## 七点六、Issue #4 的实测证据（先行取证，未实施）
-
-在补测试缺口时实测到一个确凿现象：**客户端断开后，上游并没有被取消。**
-
-取证方法：上游发 8MB 响应体，客户端收到首块数据后立即 `destroy()`。
-若代理取消上游，上游 socket 应在写完前关闭（`res.writableFinished === false`）；
-若没取消，上游会继续把 8MB 写完。
-
-实测结果：
-
-```
-aborted=0  completed=2     ← 上游把 8MB 写完，没有观察到中断
-```
-
-用例已加入 `test/integration/proxy.test.js` 并标记 skip，理由写在 skip 描述里：
-
-```js
-test('客户端中途断开：上游确实观察到响应被中断（Issue #4 验收）',
-  { skip: '#4 未实施：当前 aborted=0、上游把 8MB 写完了' }, ...)
-```
-
-**为什么用 8MB 而不是几百字节**：小 payload 会整个进内核缓冲区，上游瞬间就"写完"了，
-`writableFinished` 为 true，测不出任何东西 —— 第一版就是这么假通过的。
-
-实施 #4 后去掉 skip，这条即为验收依据。
-
----
-
 ## 七点五、两条设计原则（评审后补强）
 
 ### 1. 路由保护是「结构性禁止」优先，版本号只是第二道
@@ -241,11 +213,55 @@ Issue #2 的核心不是 generation，而是**请求回调本来就没有写 `cu
 
 ---
 
+## 七点六、Issue #4 的取证与修复
+
+**修复前实测**：上游发 8MB，客户端收首块后 `destroy()` →
+
+```
+aborted=0  completed=2     ← 上游把 8MB 写完，客户端断开完全没被感知
+```
+
+根因：`res.on('close')` 只清 timer 并记日志，**从不销毁上游请求**。
+
+**修复后**：同一场景 `aborted=1  completed=0`，客户端只收到约 81KB 就停。
+
+### 检测方法本身踩了三次坑（值得记住）
+
+要做这个断言，先得能让它失败。三次都不成立：
+
+| 判据 | 为什么不可靠 |
+|---|---|
+| `res.writableFinished` | 一次性 `res.end(8MB)` 会**立刻**置为 true，之后再断开测不出来 |
+| `res.writableLength` | 同样瞬时归零 |
+| `res.destroyed` | 服务端视角，客户端断开时不置位 |
+
+可靠信号：**服务端还没 `finish`，连接就被关了**。配合 fixture 的 `chunkedWrite`
+（把响应体拆块、每块等 `drain`），保证断开时一定有未 flush 的数据。
+
+```
+不取消:      received=8388608  aborted=0 completed=1
+读到一半取消: received=81760    aborted=1 completed=0
+```
+
+### 请求生命周期契约
+
+```js
+const ctx = { upstreamSettled, upstreamEnded, clientAborted, released }
+```
+
+- `res.on('finish')` → `upstreamEnded = true`（**不是取消**的判据）
+- `req.on('aborted')` → `clientAborted = true`
+- `res.on('close')` 且未正常结束 → 依次 `up.unpipe(res)` → `req.unpipe(up)` → `up.destroy()`
+- 主动销毁触发的 upstream error 归为取消，**不计 IP 失败**
+- `release()` 幂等，重复 close 不会重复清理
+
+---
+
 ## 八、复现方式
 
 ```bash
 git checkout v0.1.0        # 回到本基准
-npm test                   # 106 tests / 106 pass
+npm test                   # 220 tests / 220 pass
 npm run doctor             # FAIL 0 · WARN 1（端口占用）
 ```
 

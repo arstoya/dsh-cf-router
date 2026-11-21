@@ -318,45 +318,156 @@ test('direct 模式：不钉 IP，仍能正常转发', async () => {
   }
 })
 
-test('客户端中途断开：上游确实观察到响应被中断（Issue #4 验收）', { skip: '#4 未实施：当前 aborted=0、上游把 8MB 写完了' }, async () => {
+test('客户端中途断开：上游确实停止写入（Issue #4 验收）', async () => {
   // 评审指出的测试缺口：原用例只断言「没增加 IP 失败次数」，
   // 但上游可能还在照常跑 —— 那样断言照样通过。
   //
-  // 关键在 payload 必须**大到会阻塞上游写**：几百字节会整个进内核缓冲，
-  // 上游瞬间就「写完」了，测不出任何东西。用 8MB 让上游写到缓冲区满后卡住，
-  // 此时：
-  //   · 代理若取消上游 → 上游 socket 关闭，close 时 writableFinished=false → aborted
-  //   · 代理若不取消   → 上游一直卡在写，close 不触发 → aborted 保持 0
-  const env = await boot({ status: 200, body: 'x'.repeat(8 * 1024 * 1024) })
+  // 这条用例的**检测方法本身**也踩了三次坑，记在这里避免后人重犯：
+  //   1. res.writableFinished —— 一次性 res.end(bigBuffer) 立刻为 true
+  //   2. res.writableLength   —— 瞬时归零，同样测不出
+  //   3. res.destroyed        —— 服务端视角，客户端断开时不置位
+  // 可靠信号是：服务端还没 `finish` 连接就关了。配合 chunkedWrite 保证
+  // 断开时一定有未写完的数据。
+  const env = await boot({
+    status: 200,
+    body: 'x'.repeat(8 * 1024 * 1024),
+    chunkedWrite: 16,
+  })
   try {
+    // boot() 里的 refreshHost 探测是异步的，返回时可能还没落完。
+    // 等它的计数稳定下来再取基线，否则基线会偏小。
+    await waitFor(() => env.up.completedCount() >= 1, { timeoutMs: 3000, label: 'probe settled' })
+    await new Promise((r) => setTimeout(r, 100))
+
+    // 只关心本次请求的增量
     const completedBefore = env.up.completedCount()
+    const abortedBefore = env.up.abortedCount()
+    const requestsBefore = env.up.requests.length
+    let received = 0
 
     await new Promise((resolve) => {
       const req = http.request(
         { host: '127.0.0.1', port: env.port, path: '/big', method: 'GET' },
         (res) => {
-          res.once('data', () => {
-            req.destroy()          // 模拟用户点了「停止生成」
-            setTimeout(resolve, 200)
+          res.on('data', (chunk) => {
+            received += chunk.length
+            if (received > 64 * 1024) {
+              req.destroy()          // 模拟用户点了「停止生成」
+              res.destroy()
+            }
           })
+          res.on('error', () => {})
+          res.on('close', () => resolve())
         },
       )
       req.on('error', () => resolve())
       req.end()
     })
 
-    await waitFor(() => env.up.abortedCount() > 0, {
+    await waitFor(() => env.up.abortedCount() > abortedBefore, {
       timeoutMs: 3000,
       label: 'upstream observed abort',
-      describe: () => `aborted=${env.up.abortedCount()} completed=${env.up.completedCount()}`,
+      describe: () => `aborted=${env.up.abortedCount()} completed=${env.up.completedCount()} sent=${received}`,
     })
 
-    assert.ok(env.up.abortedCount() >= 1, '上游必须观察到响应中断')
+    assert.ok(env.up.abortedCount() > abortedBefore, '上游必须观察到响应中断')
     assert.equal(
       env.up.completedCount(),
       completedBefore,
       '这次请求不该在上游「正常写完」—— 说明客户端断开后上游没有被继续跑完',
     )
+    assert.equal(env.up.requests.length, requestsBefore + 1, '只该发出这一次请求')
+    assert.ok(
+      received < 8 * 1024 * 1024,
+      `客户端只应收到一部分就被断开，实际 ${received} 字节`,
+    )
+  } finally {
+    await shutdown(env)
+  }
+})
+
+test('SSE 中途取消：上游停止推送且不计 IP 失败（Issue #4）', async () => {
+  const env = await boot({
+    status: 200,
+    sse: true,
+    sseEvents: Array(60).fill('data: chunk\n\n'),
+    delayBodyMs: 40,
+  })
+  try {
+    // 探测是异步的，先等它落定再取基线
+    await new Promise((r) => setTimeout(r, 200))
+    const failBefore = api.statOf(HOST, '127.0.0.1').fail
+    const completedBefore = env.up.completedCount()
+    const abortedBefore = env.up.abortedCount()
+    let events = 0
+
+    await new Promise((resolve) => {
+      const req = http.request(
+        { host: '127.0.0.1', port: env.port, path: '/sse', method: 'GET' },
+        (res) => {
+          res.on('data', () => {
+            events += 1
+            if (events === 3) { req.destroy(); res.destroy() }
+          })
+          res.on('error', () => {})
+          res.on('close', () => resolve())
+        },
+      )
+      req.on('error', () => resolve())
+      req.end()
+    })
+
+    await waitFor(() => env.up.abortedCount() > abortedBefore, { timeoutMs: 3000, label: 'sse abort' })
+
+    assert.ok(events < 60, `只应收到少量事件，实际 ${events}`)
+    assert.equal(env.up.completedCount(), completedBefore, 'SSE 不该在上游跑完')
+    assert.equal(api.statOf(HOST, '127.0.0.1').fail, failBefore, '客户端取消不计 IP 失败')
+  } finally {
+    await shutdown(env)
+  }
+})
+
+test('重复 close 不产生重复清理（幂等）', async () => {
+  const env = await boot({ status: 200, body: 'x'.repeat(1024 * 1024), chunkedWrite: 8 })
+  try {
+    // 触发一次取消；再重复触发 socket close 不应抛错或重复记日志
+    await new Promise((resolve) => {
+      const req = http.request(
+        { host: '127.0.0.1', port: env.port, path: '/big', method: 'GET' },
+        (res) => {
+          res.once('data', () => { req.destroy(); res.destroy() })
+          res.on('error', () => {})
+          res.on('close', () => resolve())
+        },
+      )
+      req.on('error', () => resolve())
+      req.end()
+    })
+    await waitFor(() => env.up.abortedCount() > 0, { timeoutMs: 3000, label: 'abort' })
+
+    // 代理仍能正常服务下一个请求
+    const again = await request(env.port, {})
+    assert.equal(again.status, 200, '取消之后代理仍可用')
+  } finally {
+    await shutdown(env)
+  }
+})
+
+test('上游正常跑完时不会误判为取消', async () => {
+  const env = await boot({ status: 200, body: 'y'.repeat(2 * 1024 * 1024), chunkedWrite: 8 })
+  try {
+    const completedBefore = env.up.completedCount()
+    const r = await request(env.port, { path: '/full' })
+
+    assert.equal(r.status, 200)
+    assert.equal(r.body.length, 2 * 1024 * 1024, '客户端应收到完整响应体')
+    assert.equal(env.up.abortedCount(), 0, '正常完成不该被记成中断')
+    // finish 事件在响应刷完之后才触发，给一点时间让它计数
+    await waitFor(() => env.up.completedCount() > completedBefore, {
+      timeoutMs: 2000,
+      label: 'upstream completed',
+      describe: () => `completed=${env.up.completedCount()} aborted=${env.up.abortedCount()}`,
+    })
   } finally {
     await shutdown(env)
   }
