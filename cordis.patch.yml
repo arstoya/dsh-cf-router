@@ -51,7 +51,9 @@
         failThreshold: 2
         cooldownMs: 60000
         ewmaAlpha: 0.3
-        # TTFB 超过这个值不计入 EWMA（大 prompt 的 prefill 不是网络质量）
+        # TTFB 分级阈值，不是过滤阈值：超过它的样本仍保留、仍进 EWMA，
+        # 只额外计入 samples.*OverCap，由评分层决定是否采信（大 prompt 的 prefill 不是网络质量）。
+        # 详见 README「Per-candidate metrics」/「每个候选的指标」。
         ewmaMaxMs: 3000
         firstByteTimeoutMs: 60000
         allowDirectFallback: true

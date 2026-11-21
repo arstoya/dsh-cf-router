@@ -47,12 +47,27 @@ export async function startHttpsUpstream(opts = {}) {
   const { key, cert } = certPair || loadTestCertificate()
   const requests = []
   const sockets = new Set()
+  /** 上游眼里「响应还没写完，客户端就断了」的次数（Issue #4 的验收依据） */
+  const abortedResponses = []
+  /** 上游眼里「响应正常写完」的次数 */
+  let completedResponses = 0
 
   const server = https.createServer({ key, cert }, async (req, res) => {
     const chunks = []
     req.on('data', (c) => chunks.push(c))
     const record = { method: req.method, url: req.url, headers: req.headers, body: null }
     requests.push(record)
+
+    // res.writableFinished 为 false 就 close，说明客户端在上游写完前断开了。
+    // 这是「代理有没有真的取消上游」的可观测证据：若代理没销毁上游请求，
+    // 它会把响应读完，这里就不会记成 aborted。
+    res.on('close', () => {
+      if (res.writableFinished) {
+        completedResponses += 1
+      } else {
+        abortedResponses.push({ url: req.url, at: Date.now() })
+      }
+    })
 
     await new Promise((r) => req.on('end', r).on('error', r))
     record.body = Buffer.concat(chunks).toString('utf8')
@@ -126,6 +141,9 @@ export async function startHttpsUpstream(opts = {}) {
     key,
     requests,
     connections: () => sockets.size,
+    /** 客户端在上游写完前断开的次数（代理取消链路的可观测证据） */
+    abortedCount: () => abortedResponses.length,
+    completedCount: () => completedResponses,
     async close() {
       for (const s of sockets) { try { s.destroy() } catch { /* ignore */ } }
       await new Promise((r) => server.close(r))
