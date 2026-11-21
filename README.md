@@ -269,6 +269,22 @@ Three layers guard the endpoints:
 
 In-process DSH tool calls (`cf_router_*`) do not go through HTTP and are not affected by any of this.
 
+## Connection pool lifecycle
+
+Switching routes or condemning an IP does **not** destroy the old `https.Agent` immediately. It moves to a draining state and is destroyed once its in-flight requests finish — otherwise a route switch would sever any response still streaming, which for SSE looks exactly like the generation hanging.
+
+| State | Behaviour |
+| --- | --- |
+| `active` | Accepts new requests |
+| `draining` | Refuses new requests, existing ones finish |
+| `destroyed` | Released |
+
+A request counts as in-flight from dispatch until its **body** has finished, not until headers arrive — otherwise an SSE response would release its slot on the first byte, the pool would look idle, and it would be reclaimed mid-stream.
+
+`drainTimeoutMs` (default 120000) is the backstop: a pool that never drains is force-reclaimed after that. It is a timeout guard, not the normal path. Immediate destruction survives only for process exit.
+
+A pool that is draining for `host|ip` does not get reused: a switch back to the same IP creates a new generation, so new requests never queue behind a pool on its way out. `statusSnapshot().connectionPools` shows both generations, in-flight counts, and `forcedReclaimInMs`.
+
 ## Candidate pool
 
 Candidates are no longer re-randomised every round (which used to drop good IPs after one refresh). A per-host pool tracks lifecycle metadata and decides what is worth probing:

@@ -218,3 +218,48 @@ test('切换后新请求走新池，不复用排空中的旧池', async () => {
     assert.ok(afterId > beforeId, `新请求应拿到新一代池：${beforeId} → ${afterId}`)
   } finally { await shutdown(env) }
 })
+
+/* ============================================================
+ * 阶段 4：状态接口与进程退出
+ * ============================================================ */
+
+test('statusSnapshot 暴露连接池状态与强制回收倒计时', async () => {
+  const env = await boot({ status: 200 })
+  try {
+    await new Promise((res) => {
+      const q = http.request({ host: '127.0.0.1', port: env.port, path: '/x' }, (x) => {
+        x.resume(); x.on('end', res)
+      })
+      q.on('error', res); q.end()
+    })
+    api.dropAgents(HOST)
+
+    const cp = api.statusSnapshot().connectionPools
+    assert.ok(cp.activeCount >= 0)
+    assert.ok(cp.drainingCount >= 1)
+    assert.equal(cp.drainTimeoutMs, 120000)
+    const p = cp.drainingPools[0]
+    assert.ok('forcedReclaimInMs' in p, '应给出还有多久强杀')
+    assert.ok(p.forcedReclaimInMs > 0)
+    assert.ok(p.forcedReclaimInMs <= cp.drainTimeoutMs)
+  } finally { await shutdown(env) }
+})
+
+test('dispose 立即销毁所有池（退出不等排空）', async () => {
+  const env = await boot({ status: 200 })
+  try {
+    await new Promise((res) => {
+      const q = http.request({ host: '127.0.0.1', port: env.port, path: '/x' }, (x) => {
+        x.resume(); x.on('end', res)
+      })
+      q.on('error', res); q.end()
+    })
+    api.dropAgents(HOST)
+    assert.ok(api.poolRegistry.stats().drainingCount >= 1)
+
+    mod.dispose()
+    // dispose 之后池登记表应清空
+    const s = api.poolRegistry.stats()
+    assert.equal(s.activeCount + s.drainingCount, 0, '退出时不该留任何池')
+  } finally { await shutdown(env) }
+})
