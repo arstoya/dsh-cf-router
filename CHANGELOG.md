@@ -24,7 +24,7 @@ Test count 237 → **458**, all passing. Four modules with separated responsibil
 | Switch criterion | Was "30% faster this round → switch". Now four gates: sample count (3) → improvement (15%) → consecutive rounds (2) → dwell time (120s). Old behaviour is still expressible: `minImprovementRatio: 0.3` + `consecutiveBetterRounds: 1` + `minDwellTimeMs: 0` |
 | Route switching no longer destroys the old connection pool | It drains; in-flight requests finish. `drainTimeoutMs` (120s) is the backstop |
 | Candidates persist across refreshes | Previously re-randomised every round, so a good IP could vanish after one refresh |
-| 12 new config fields | 8 candidate-pool, 1 drain timeout, 4 hysteresis |
+| 13 new config fields | 8 candidate-pool, 1 drain timeout, 4 hysteresis |
 
 ### Added
 

@@ -105,7 +105,8 @@
         allowUnauthenticatedLocalAdmin: false
         # auto   = 优选最快的 IPv4，失败自动切换（默认）
         # direct = 不做优选，按系统 DNS 直连（仍经过本地代理，用于排查优选本身的问题）
-        # 运行时可用 cf_router_mode 工具或 GET /__router/mode?value= 切换，选择写入 stateFile 并保留
+        # 运行时可用 cf_router_mode 工具或 POST /__router/mode（body: {"mode":...}）切换，
+        # 选择写入 stateFile 并保留。注意 GET /__router/mode 是只读接口，#7 起不再接受 ?value= 写法。
         routingMode: "auto"
         # 运行时选择的落盘路径，留空则用 $DSH_HOME/cf-router-state.json
         stateFile: ""
