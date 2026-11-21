@@ -269,6 +269,25 @@ curl -X POST -H 'content-type: application/json'      -H "Authorization: Bearer 
 
 进程内的 DSH 工具调用（`cf_router_*`）不经过 HTTP，不受以上任何一条影响。
 
+## 线路切换迟滞
+
+选新线路不是「这一轮谁的数字最小」。一次探测只是一个观测，拿两个比就是在比两次运气。四道闸，按顺序：
+
+| 闸门 | 默认 | 为什么 |
+| --- | --- | --- |
+| 样本量 | `minSamples: 3` | 两侧都必须被真正测过。各探一次什么都证明不了 |
+| 改善幅度 | `minImprovementRatio: 0.15` | 低于它就是噪声而非信号 |
+| 连续轮次 | `consecutiveBetterRounds: 2` | 一轮好是运气，连续两轮才是趋势 |
+| 驻留时间 | `minDwellTimeMs: 120000` | 防止切过来几秒又切回去 |
+
+顺序有意义：样本不足不该报「幅度不够」（那是噪声在说话），幅度不足不该累计轮次（否则抖动会攒出假趋势）。
+
+**硬故障绕过全部四道。** 当前线路处于 `cooling`、`half_open` 或无法评分时立即弃用——让它继续服务只会把错误暴露给真实请求。驻留、样本、幅度在那里都不相关。
+
+旧行为（「快 30% 就立刻切」）仍可表达：`minImprovementRatio: 0.3` + `consecutiveBetterRounds: 1` + `minDwellTimeMs: 0`。
+
+`statusSnapshot().switchHysteresis` 给出每个 host 累计的轮次和剩余驻留时间。
+
 ## 连接池生命周期
 
 切换线路或判定 IP 故障**不再立即销毁**旧 `https.Agent`。它会进入排空状态，等已有请求跑完再销毁 —— 否则一次切换就会切断还在传输的响应，对 SSE 来说，这和「生成中途卡死」看起来一模一样。

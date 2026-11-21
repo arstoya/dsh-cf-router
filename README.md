@@ -269,6 +269,25 @@ Three layers guard the endpoints:
 
 In-process DSH tool calls (`cf_router_*`) do not go through HTTP and are not affected by any of this.
 
+## Route switching hysteresis
+
+Picking a new route is not just "whoever has the lowest number this round". A single probe is one observation; comparing two of them is comparing two draws of luck. Four gates, in order:
+
+| Gate | Default | Why |
+| --- | --- | --- |
+| Sample count | `minSamples: 3` | Both sides must have been really probed. One sample each proves nothing |
+| Improvement | `minImprovementRatio: 0.15` | Below this the difference is noise, not signal |
+| Consecutive rounds | `consecutiveBetterRounds: 2` | One good round is a draw; two in a row is a trend |
+| Dwell time | `minDwellTimeMs: 120000` | Prevents switching back seconds after switching here |
+
+The order matters: an insufficient sample count should not be reported as "not enough improvement" (that is just noise talking), and a small improvement should not accumulate rounds (otherwise jitter manufactures a fake trend).
+
+**Hard failures bypass all four.** If the current route is `cooling`, `half_open`, or cannot be scored, it is abandoned immediately — leaving it in service only exposes real requests to errors. Dwell time, samples and improvement are all irrelevant there.
+
+The old behaviour ("switch when 30% faster, immediately") is still expressible: `minImprovementRatio: 0.3` with `consecutiveBetterRounds: 1` and `minDwellTimeMs: 0`.
+
+`statusSnapshot().switchHysteresis` shows each host's accumulated rounds and how much dwell time remains.
+
 ## Connection pool lifecycle
 
 Switching routes or condemning an IP does **not** destroy the old `https.Agent` immediately. It moves to a draining state and is destroyed once its in-flight requests finish — otherwise a route switch would sever any response still streaming, which for SSE looks exactly like the generation hanging.

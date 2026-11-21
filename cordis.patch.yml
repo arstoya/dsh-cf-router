@@ -53,6 +53,12 @@
         # 连接池排空超时（Issue #12）。切换线路后旧池等已有请求跑完再销毁；
         # 超过这个时间仍未排空则强制销毁。默认 120 秒，够长 SSE 跑完。
         drainTimeoutMs: 120000
+        # 切换迟滞（Issue #10）：样本量 → 改善幅度 → 连续更优 → 最短驻留。
+        # 硬故障（cooling/half_open/不可评分）不受这些约束，立即切走。
+        minImprovementRatio: 0.15
+        consecutiveBetterRounds: 2
+        minDwellTimeMs: 120000
+        minSamples: 3
         # 两级测速：候选多时先用 TCP 快速筛（L1），只对最快的 l2TopN 个做完整 HTTP 实测（L2）
         l1Concurrency: 20
         l1TimeoutMs: 1200
