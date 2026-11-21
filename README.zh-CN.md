@@ -269,6 +269,25 @@ curl -X POST -H 'content-type: application/json'      -H "Authorization: Bearer 
 
 进程内的 DSH 工具调用（`cf_router_*`）不经过 HTTP，不受以上任何一条影响。
 
+## 候选池
+
+候选不再每轮重新随机（旧实现下一次刷新就可能丢掉优质 IP）。每个 host 一个候选池，记录生命周期元信息并决定「哪些值得探测」：
+
+| 来源 | 为什么保留 |
+| --- | --- |
+| `current` | 此刻正在承载流量的 IP |
+| `dns` | DNS 解析得到的基础兜底 |
+| `historical` | 有成功探测记录的 IP |
+| `exploration` | 新 IP，受比例与最小刷新间隔双重约束 |
+
+**容量上限绝不压过 DNS 兜底。** 如果 DNS 返回数量超过 `candidatePoolMaxSize`，候选池会临时超出配置上限 —— 为了一个数字丢掉真实兜底，是拿实质换形式。当前线路同理。`statusSnapshot().candidatePools[].overCapacity` 如实报告超出多少，不隐藏。
+
+**淘汰候选不删历史。** 性能数据在 `ipStats`，有独立生命周期；候选池只记 `firstSeenAt` / `lastProbeAt` / `lastSuccessAt` / `probeCount` 这类元信息。掉出候选池后又出现的 IP，会沿用之前的 EWMA 与失败计数，而不是当成全新节点。Agent 复用是另一回事（#12）。
+
+过期判据取 `lastSeenAt` / `lastProbeAt` / `lastSuccessAt` 三者的最新值 —— 一个历史优秀但近期不在 DNS 里的 IP，不会因为「最近没被看见」就被丢掉。
+
+四个比例在装载期归一化；若全为 0 则退化为「只用 DNS 兜底」而非空池。实际生效值见 `statusSnapshot().candidatePools[].ratios`。
+
 ## Header 处理
 
 代理夹在客户端与上游之间，必须守住**端到端 / 逐跳**边界（RFC 7230 §6.1），而不是「看着特殊就删」。

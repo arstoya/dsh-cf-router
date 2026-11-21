@@ -269,6 +269,25 @@ Three layers guard the endpoints:
 
 In-process DSH tool calls (`cf_router_*`) do not go through HTTP and are not affected by any of this.
 
+## Candidate pool
+
+Candidates are no longer re-randomised every round (which used to drop good IPs after one refresh). A per-host pool tracks lifecycle metadata and decides what is worth probing:
+
+| Source | Why it is kept |
+| --- | --- |
+| `current` | The IP serving traffic right now |
+| `dns` | Base fallback from DNS resolution |
+| `historical` | IPs with a successful probe record |
+| `exploration` | New IPs, capped by ratio and by a minimum refresh interval |
+
+**The capacity limit never overrides the DNS fallback.** If DNS returns more addresses than `candidatePoolMaxSize`, the pool temporarily grows beyond the configured cap — dropping a DNS address to satisfy a number would be trading a real fallback for a cosmetic invariant. The same applies to the current IP. `statusSnapshot().candidatePools[].overCapacity` reports the actual excess instead of hiding it.
+
+**Pruning a candidate does not delete its history.** Performance data lives in `ipStats` and has its own lifecycle; the pool only holds `firstSeenAt` / `lastProbeAt` / `lastSuccessAt` / `probeCount` and similar. An IP that drops out and later reappears resumes with its previous EWMA and failure counts rather than being treated as brand new. Agent reuse is governed separately (#12).
+
+Expiry looks at the latest of `lastSeenAt` / `lastProbeAt` / `lastSuccessAt` — a historically good IP that has not been in DNS for a while is not discarded just because it was not *seen* recently.
+
+The four ratios are normalised at load time; if they sum to 0 the pool degenerates to DNS-only rather than becoming empty. See `statusSnapshot().candidatePools[].ratios` for the values actually in effect.
+
 ## Header handling
 
 The proxy sits between the client and the upstream, so it has to respect the **end-to-end vs hop-by-hop** boundary (RFC 7230 §6.1) rather than deleting whatever looks unusual.

@@ -40,6 +40,16 @@
         # 每段抽 discoverPerRange 个。抽多了是噪声，1~2 个/段够做故障兜底。
         discoverEnabled: true
         discoverPerRange: 1
+        # 候选池（Issue #11）。DNS 返回数量超过 maxSize 时**实际容量会临时超出**，
+        # 绝不为了满足上限丢弃 DNS 兜底。淘汰候选不删 ipStats 的历史。
+        candidatePoolMaxSize: 64
+        candidatePoolTtlMs: 86400000
+        candidateExploreRatio: 0.2
+        candidateHistoricalRatio: 0.4
+        candidateCurrentRatio: 0.2
+        candidateDnsRatio: 0.2
+        candidateRefreshMinIntervalMs: 300000
+        candidateCoolingRetentionMs: 3600000
         # 两级测速：候选多时先用 TCP 快速筛（L1），只对最快的 l2TopN 个做完整 HTTP 实测（L2）
         l1Concurrency: 20
         l1TimeoutMs: 1200
