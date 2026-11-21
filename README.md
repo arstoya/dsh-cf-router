@@ -341,7 +341,7 @@ SSE additionally gets `x-accel-buffering: no`, `cache-control: no-cache` when ab
 
 ## Version
 
-`0.2.1` — see [CHANGELOG.md](CHANGELOG.md) for what changed and what breaks on upgrade.
+`0.2.2` — see [CHANGELOG.md](CHANGELOG.md) for what changed and what breaks on upgrade.
 
 ## Limits
 

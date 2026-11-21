@@ -4,6 +4,52 @@ All notable changes to this project. Versions follow the milestone plan tracked 
 
 ---
 
+## [0.2.2] — 2026-11-21
+
+**Milestone: 健康管理与智能选路** — issues #9, #10, #11, #12.
+
+Test count 237 → **458**, all passing. Four modules with separated responsibilities:
+
+```
+#9   what happened / is this IP currently usable
+#11 which IPs are worth keeping, probing, evicting
+#12 the connection resources behind each IP and their lifetime
+#10 among usable candidates, which one to prefer
+```
+
+### ⚠️ Behaviour changes
+
+| Change | Detail |
+| --- | --- |
+| Switch criterion | Was "30% faster this round → switch". Now four gates: sample count (3) → improvement (15%) → consecutive rounds (2) → dwell time (120s). Old behaviour is still expressible: `minImprovementRatio: 0.3` + `consecutiveBetterRounds: 1` + `minDwellTimeMs: 0` |
+| Route switching no longer destroys the old connection pool | It drains; in-flight requests finish. `drainTimeoutMs` (120s) is the backstop |
+| Candidates persist across refreshes | Previously re-randomised every round, so a good IP could vanish after one refresh |
+| 12 new config fields | 8 candidate-pool, 1 drain timeout, 4 hysteresis |
+
+### Added
+
+- **Unified error classifier (#9)** — `classifyError()` answers only three things: what happened, is it retryable, should it penalise the IP and by how much. It does not touch statistics, state, or routing. Classification uses stable error codes, never fuzzy message matching. Three timeout phases are distinguished (`connect` / `first_byte` / `transfer`); first-byte timeout is weighted 0.5 because it may be model prefill rather than a broken route.
+- **Health state machine (#9)** — `healthy` / `cooling` / `half_open`. Transitions are deliberately restricted: no jumping straight from healthy to half-open, no returning from cooling without verification. `penaltyUntil` is preserved for compatibility and only ever changes through `transitionHealth()`.
+- **Half-open recovery probe (#9)** — cooldown expiry no longer restores full eligibility. A real probe runs first; success refreshes the routing metrics from that round rather than smoothing on top of stale EWMA.
+- **Candidate pool (#11)** — four sources (current / historical / dns / exploration) with quota-based selection, bounded exploration, capacity and TTL pruning.
+- **Connection pool lifecycle (#12)** — `active` / `draining` / `destroyed`, per-`host|ip` with multiple generations allowed so a switch back does not queue behind a draining pool.
+- **Switch hysteresis (#10)** — sample count, improvement ratio, consecutive rounds, dwell time. Hard failures bypass all four.
+
+### Fixed
+
+- **Upstream response errors were unhandled** — `upRes` had no `error` listener, so a response that died mid-body produced an uncaught exception and hung the process (reproduced: a test ran 400 s without returning).
+- **DNS candidates bypassed health filtering** — a cooling IP was re-probed on every refresh, wasting requests and contradicting "cooling does not participate in routing".
+- **First refresh skipped exploration** — `makePool(now)` made the pool look freshly refreshed, so `discoverEnabled: true` produced zero discovered candidates.
+- **`resetAll` did not clear the candidate pool** — only `__resetForTest` did.
+
+### Notes
+
+- `pruneCandidatePool` reports `overCapacity` instead of deleting protected entries. If DNS returns more addresses than `candidatePoolMaxSize`, the pool exceeds the cap on purpose — a number is not worth losing the fallback.
+- Evicting a candidate does not delete its `ipStats`. Performance history has its own lifecycle; a returning IP resumes with its previous EWMA rather than being treated as new.
+- The 24-hour real-network soak the plan asks for cannot run locally. All verification is fixture-level; parameters are the plan's initial experimental values, not calibrated against live Cloudflare.
+
+---
+
 ## [0.2.1] — 2026-11-21
 
 **Milestone: 正确性与安全基础** — issues #1–#8, plus follow-ups #17/#18.

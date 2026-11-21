@@ -341,7 +341,7 @@ SSE 额外加 `x-accel-buffering: no`、缺省补 `cache-control: no-cache`、�
 
 ## 版本
 
-`0.2.1` —— 变更与升级注意事项见 [CHANGELOG.md](CHANGELOG.md)。
+`0.2.2` —— 变更与升级注意事项见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 局限
 
