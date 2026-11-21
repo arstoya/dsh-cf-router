@@ -227,3 +227,34 @@ test('健康状态变化不污染路由切换记录（generation 不变量）', 
   assert.equal(api.state().switches.length, before, '健康变化不该进 routes switches')
   assert.equal(api.getRouteGeneration(HOST), api.state().switches.length, 'generation 不变量仍成立')
 })
+
+/* ============================================================
+ * 阶段 5：状态接口汇总
+ * ============================================================ */
+
+test('healthSummary 汇总各状态数量', () => {
+  const clock = setup()
+  const IP2 = '203.0.113.2'
+  api.state().hosts.get(HOST).results.push(
+    { ip: IP2, okCount: 3, samples: 3, ttfbMedian: 110, ttfbBest: 110, totalMedian: 130, tcpMedian: 10, tlsMedian: 20, colo: 'HKG', excluded: null },
+  )
+
+  api.transitionHealth(HOST, IP, 'cooling', 'test')
+  const sum = api.statusSnapshot().healthSummary
+
+  assert.equal(sum.counts.cooling, 1, `实际 ${JSON.stringify(sum.counts)}`)
+  assert.equal(sum.counts.healthy, 1)
+  assert.equal(sum.staleMetrics, 1, 'cooling 的应标记 metricsStale')
+})
+
+test('候选暴露 cooldownUntil，健康时不暴露时刻', () => {
+  const clock = setup()
+  api.transitionHealth(HOST, IP, 'cooling', 'test')
+  let c = api.statusSnapshot().hosts[0].candidates[0]
+  assert.ok(c.health.cooldownUntil > clock.now(), '冷却中应有到期时刻')
+
+  api.transitionHealth(HOST, IP, 'half_open', 'expired')
+  api.transitionHealth(HOST, IP, 'healthy', 'ok')
+  c = api.statusSnapshot().hosts[0].candidates[0]
+  assert.equal(c.health.cooldownUntil, null, '恢复后应为 null')
+})
