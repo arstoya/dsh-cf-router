@@ -129,13 +129,12 @@ test('测试隔离：连续两次 setup 拿到互不可见的状态', () => {
   assert.equal(api.state().hosts.size, 0, '第二次 setup 应看不到上一次的 host')
 })
 
-test('currentMode：配置里的 routingMode 在启动时不会直接生效（已知问题，见 baseline）', () => {
-  // 记录实际行为而不是理想行为：apply() 先把 cfg.routingMode 记成 lastCfgMode 基准，
-  // 于是首次 currentMode() 认为「设置页没动过」，沿用 loadState() 的默认 auto。
-  // 结果是「在 patch 里写 routingMode: direct」启动后并不生效，必须运行时调 setRoutingMode。
-  // 这不是本轮要修的（不在 Issue #1–#3 范围），先钉住行为防止无意中改掉。
+test('currentMode：无 stateFile 时配置里的 routingMode 正确生效（#18 已修）', () => {
+  // 修复前：apply() 把 cfg.routingMode 记成 lastCfgMode 基准，首次 currentMode()
+  // 认为「设置页没动过」而跳过同步，沿用 loadState 的默认 auto —— 配置永远无效。
+  // 修复后：resolveInitialMode() 明确区分「stateFile 里有值」与「只是默认值」。
   setup({ routingMode: 'direct' })
-  assert.equal(api.currentMode(), 'auto')
+  assert.equal(api.currentMode(), 'direct')
 })
 
 test('setRoutingMode 运行时生效并持久化到 stateFile（用临时路径，不碰 DSH_HOME）', async () => {

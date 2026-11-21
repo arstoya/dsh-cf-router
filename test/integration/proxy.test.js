@@ -230,23 +230,29 @@ test('客户端中途断开：上游连接被清理，不算 IP 失败', async (
   }
 })
 
-test('firstByteTimeoutMs 有 5000ms 硬下限：配 300 也不会提前掐断', async () => {
-  // 现状（已知问题，记入 baseline）：handleProxy 里是 Math.max(5000, cfg.firstByteTimeoutMs)，
-  // 所以 300ms 的配置实际生效值是 5000ms。上游延迟 1200ms 仍会正常返回 200。
-  // 这条断言钉住当前行为；若将来把下限拿掉，这里会红，提醒同步更新文档。
+test('firstByteTimeoutMs 有 5000ms 下限：配 300 按 5000 执行，且状态接口可见', async () => {
+  // Issue #17 最小修复后的语义：
+  //   · 下限仍然存在（setInterval(0)/0ms 超时会打满事件循环，护栏必须留）
+  //   · 但"配了 300 实际跑 5000"这件事不再静默 —— statusSnapshot().configEffective
+  //     同时暴露 configured(300) 与 effective(5000)
   const env = await boot({ status: 200, delayFirstByteMs: 1200 }, { firstByteTimeoutMs: 300 })
   try {
     const r = await request(env.port, { method: 'POST', body: '{}' })
-    assert.equal(r.status, 200, '5000ms 下限意味着 1200ms 延迟不会被掐断')
+    assert.equal(r.status, 200, '5000ms 生效值意味着 1200ms 延迟不会被掐断')
+
+    // 关键断言：接口必须说实话
+    const eff = api.statusSnapshot().configEffective.firstByteTimeoutMs
+    assert.equal(eff.configured, 300, '配置值应显示 300')
+    assert.equal(eff.effective, 5000, '生效值必须显示 5000，不能显示 300')
   } finally {
     await shutdown(env)
   }
 })
 
-test('上游首字节超时：真实触发 502（受 5000ms 下限约束，本用例约 5 秒）', async () => {
+test('上游首字节超时：真实触发 502（受 5000ms 生效值约束，本用例约 5 秒）', async () => {
   // 这是「长时间无首字节」的真实路径覆盖：
-  // handleProxy 的 firstByteTimer 是 Math.max(5000, cfg.firstByteTimeoutMs)，
-  // 所以必须让上游拖过 5 秒才能触发。用例慢，但它覆盖的是真实故障场景，
+  // firstByteTimeoutMs 的生效值是 max(5000, 配置)，所以必须让上游拖过 5 秒才能触发。
+  // 配 5000 时生效值仍是 5000。用例慢，但它覆盖的是真实故障场景，
   // 不能为了跑得快就删掉。
   const env = await boot({ status: 200, delayFirstByteMs: 6500 }, { firstByteTimeoutMs: 5000 })
   try {

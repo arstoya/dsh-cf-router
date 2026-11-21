@@ -115,6 +115,53 @@ node scripts/doctor.mjs
 | `cf_router_reset` | 清空失败计数、冷却与连接池 |
 | `cf_router_mode` | 切换 `auto` / `direct` 并持久化；不传参则查询当前值 |
 
+### 配置下限
+
+部分配置项有硬下限。它们**不再是静默生效** —— `GET /__router/status` 的 `configEffective` 同时给出「你写的值」和「实际跑的值」：
+
+```json
+"configEffective": {
+  "firstByteTimeoutMs": { "configured": 300, "effective": 5000, "floorMs": 5000 }
+}
+```
+
+| 字段 | 下限 | 为什么 |
+| --- | --- | --- |
+| `firstByteTimeoutMs` | 5000 ms | `setTimeout(0)` 会立刻掐断每个请求 |
+| `cooldownMs` | 1000 ms | 冷却过短会让候选之间反复横跳 |
+| `probeIntervalMs` | 30000 ms | 每秒探测一次会被边缘当成扫描 |
+| `healthCheckMs` | 5000 ms | 同上 |
+| `ewmaMaxMs` | 200 ms | `*OverCap` 的分级阈值；低于它所有样本都算「超额」 |
+
+**没有上线。** 长推理确实可能把 `firstByteTimeoutMs` 配到几百秒；给它加上限，就是制造一个与这些下限同类的静默改写。
+
+所有数值单位均为毫秒。
+
+### routingMode 的解析
+
+`routingMode` 有三个来源，`GET /__router/status` 的 `routingModeSources` 三者都给出：
+
+```json
+"routingModeSources": {
+  "configMode": "direct",
+  "stateFileMode": "auto",
+  "effectiveMode": "auto",
+  "stateFileWins": true
+}
+```
+
+启动时的解析规则：
+
+| stateFile | 配置 | 生效 |
+| --- | --- | --- |
+| 不存在 / 无有效值 | `direct` | `direct` |
+| `auto` | `direct` | `auto`（stateFile 赢） |
+| `direct` | `auto` | `direct`（stateFile 赢） |
+
+`stateFileWins` 为 true 时，运行时值来自之前某次 `setRoutingMode()`。想让配置重新生效，请调用 `resetRoutingMode`（只移除 `routingMode` 这一个键，文件里其它状态保留），**不要**整个删掉 `stateFile`。
+
+`direct` 模式下后台探测与健康巡检照常运行，这样切回 `auto` 时能立刻用上最新数据。这是刻意设计，不是泄漏。
+
 ### 每个候选的指标
 
 v0.2.1 起每个候选上报六个独立 EWMA。每一个都只由一对明确的起止事件产生，互不混杂；采不到就返回 `null`，不拿别的指标顶替。

@@ -11,6 +11,13 @@
 #       （路径原样透传，例如 /v1/chat/completions）
 #
 # ⚠ 必改：下面的 targets / probePath 是占位值，装之前换成你自己的上游域名。
+#
+# ⚠ 部分配置有下限（不是静默生效，`GET /__router/status` 的 configEffective
+#    会同时给出 configured 与 effective）：
+#      firstByteTimeoutMs ≥ 5000ms   cooldownMs ≥ 1000ms
+#      probeIntervalMs ≥ 30000ms     healthCheckMs ≥ 5000ms    ewmaMaxMs ≥ 200ms
+#    没有上限：长推理可以把 firstByteTimeoutMs 配到几百秒。
+#    单位一律毫秒。
 - insert:
     - id: dsh-cf-router
       name: dsh-cf-router

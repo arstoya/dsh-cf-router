@@ -11,7 +11,7 @@
 | Issue | 问题真实性 | 方案完整性 | 实际影响 | 建议 |
 |---|---|---|---|---|
 | **#17（#A）超时硬下限** | 真实 | 缺 3 处，且会扩大问题 | **零**（实际部署一个都没触发） | 最小修复后关闭 |
-| **#18（#B）启动 routingMode** | 真实 | 缺 1 处致命前提 | 中等（改配置无效，须手删文件） | 先修测试桩，再走方案 C |
+| **#18（#B）启动 routingMode** | 真实 | 已按评审修正 | 中等（改配置无效，须手删文件） | 已实施（见下） |
 
 **执行顺序建议：#B 的测试桩修正优先于两者** —— 它不只服务 #B，现有 `state.test.js` 里两条 `routingMode` 用例也都不准。
 
@@ -213,28 +213,67 @@ node.volatile = () => {
 
 修完之后要能构造出「`cfg.routingMode` 是对象、`.get()` 返回字符串」的场景。
 
-### 2.2 issue 的根因判断有误
+### 2.2 根因判断与修法（评审修正）
 
 issue 写「优先级：stateFile 恒优先于配置」，但没写清根因。实际在 `apply()`：
 
 ```js
 loadState()                                        // 读回上次的 routingMode
 const raw = cfg.routingMode
-lastCfgMode = String((raw && typeof raw.get === 'function' ? raw.get() : raw) || 'auto')
-//            ↑ 基准值被设成「配置值」
+lastCfgMode = String(... || 'auto')                // 基准值被设成「配置值」
 ```
 
-于是 `currentMode()` 首次调用：
+`currentMode()` 首次调用：
 
 ```js
-const cv = ...                                    // = 配置值
+const cv = ...                                     // = 配置值
 if (cv !== lastCfgMode) { ... }                    // 相等 → 跳过同步
 return routingMode                                 // 仍是 loadState 的 auto
 ```
 
-**这不是「优先级设计」，是基准值初始化顺序 bug。** `lastCfgMode` 用配置值初始化，等于告诉 `currentMode()`「设置页已经是这个值了，不用同步」。
+**这不是「优先级设计」，是基准值初始化顺序 bug。**
 
-**修法比 issue 设想的简单**：`lastCfgMode` 初始化为 `null` 或哨兵值，让首次 `currentMode()` 必然触发一次同步。
+#### ⚠ 本报告初版的修法有逻辑矛盾（评审指出）
+
+初版 2.2 建议「`lastCfgMode = null`，让首次 `currentMode()` 必然同步」，但 2.3 又推荐「保持 stateFile 优先」。**两者不能同时成立**：
+
+```
+配置 = direct，stateFile = auto
+lastCfgMode = null
+→ 首次 currentMode()：cv('direct') !== null → 同步 → routingMode = direct
+```
+
+这就变成了**配置优先**，覆盖了 stateFile 恢复的值。所以不能靠初始化哨兵值。
+
+#### 正确修法：区分「stateFile 里真的有值」与「只是默认值」
+
+`loadState()` 改为返回**是否真的读到了有效值**，而不是靠事后用路由值反推：
+
+```js
+function loadState() {
+  statePath = resolveStatePath()
+  try {
+    if (!fs.existsSync(statePath)) return { found: false, mode: null }
+    const raw = JSON.parse(fs.readFileSync(statePath, 'utf8'))
+    if (raw && isValidMode(raw.routingMode)) return { found: true, mode: raw.routingMode }
+    return { found: false, mode: null }
+  } catch { return { found: false, mode: null } }
+}
+
+function resolveInitialMode(source) {
+  configMode = readConfigMode(source)              // 经 .get() 读 volatile
+  const persisted = loadState()
+  stateFileMode = persisted.found ? persisted.mode : null
+
+  routingMode = persisted.found ? persisted.mode : configMode
+  lastCfgMode = configMode
+  return { configMode, stateFileMode, effectiveMode: routingMode }
+}
+```
+
+关键点：**`routingMode` 的初值由 `persisted.found` 决定**，而 `lastCfgMode` 记的是配置值 —— 两者来源不同，不再互相污染。
+
+配置热更新是否覆盖 stateFile，仍走现有运行时机制（`setRoutingMode`），**不靠初始化哨兵值间接决定**。
 
 ### 2.3 四个候选方向的评估
 
@@ -253,9 +292,21 @@ return routingMode                                 // 仍是 loadState 的 auto
 
 这样既修掉「静默」，又不改任何既有行为。
 
-### 2.4 `direct` 的两个疑点：审计阶段必须先出结论
+### 2.4 resetRoutingMode：不要建议删除整个状态文件
 
-issue 提了但没定论，实现阶段会反复：
+初版建议「删掉 `<statePath>` 可让配置重新生效」—— **有风险**：stateFile 现在只存 `routingMode`，但按 Issue #13 的规划还会存候选池、历史性能。整文件删除会连带丢别的状态。
+
+改为提供精确操作 `resetRoutingMode()`：
+
+- 只移除 `routingMode` 这个键
+- 保留文件里其它内容
+- 写入 `routingModeResetAt` 时间戳
+- 原子写（临时文件 + rename）
+- 清除后 `routingMode` 回到配置值
+
+### 2.5 `direct` 的两个疑点：已定案
+
+评审已给结论，按此实现：
 
 **疑点 1：direct 下探测与健康巡检是否该继续跑**
 
@@ -266,7 +317,7 @@ let ip = currentMode() === 'direct' ? null : (currentIp.get(host) || null)
 
 但 `probeTimer` 与 `healthTick` 照常运行，每 5 分钟对几十个候选 IP 发请求，`currentIp` 在 direct 下不参与转发。
 
-→ 白烧流量 vs 保持数据新鲜以便切回 auto。**需明确取舍。**
+→ **定案：保留后台探测。** 理由：direct 的产品语义是「请求不经过候选 IP 路由」，不是「彻底停止候选 IP 的网络活动」。用户切回 auto 时可以直接用上最新数据，不必重新等一轮健康检查。文档与状态接口已明确写出这一点。若将来需要彻底停止，加独立配置项，不要让 `routingMode` 同时承担两种职责。
 
 **疑点 2：`stats.directFallback` 在 direct 下的语义**
 
@@ -279,9 +330,13 @@ if (useDirect) stats.directFallback += 1
 
 原本语义是「兜底触发次数」，direct 模式下变成「所有请求」，语义被稀释。
 
-→ 是否该分开计数，或 direct 模式不计入。
+→ **定案：拆成两个字段。**
+- `directRequests`：主动处于 direct 模式的请求数
+- `directFallback`：auto 模式下因没有可用 IP 而回退的请求数（保持原语义）
 
-### 2.5 issue 里的测试要求需要补充一条
+这样以后分析「自动路由故障」时，`directFallback` 的增长才有诊断意义。
+
+### 2.6 issue 里的测试要求需要补充一条
 
 issue 写「配置 `direct` + 无 stateFile → 生效 `direct`」，这条在修好测试桩之前**无法验证**。修桩后应加：
 
@@ -349,3 +404,33 @@ grep -nE "firstByteTimeoutMs|cooldownMs|healthCheckMs|probeIntervalMs|ewmaMaxMs"
 ## 五、一句话总结
 
 > **#17 问题真实但本部署从未触发，用文档解决即可；#18 问题真实且根因被误判，但测试桩的 volatile 语义是假的前提，必须先修桩再谈实现。**
+
+---
+
+## 六、实施记录（2026-11-21）
+
+评审结论已全部落地，共四个提交：
+
+| 提交 | 内容 |
+|---|---|
+| `25241e0` | 测试桩补齐 volatile 合约（P0 前置） |
+| 本次 | #18 核心：`resolveInitialMode` 区分持久化与默认值 |
+| 本次 | `resetRoutingMode` + `directRequests` 统计拆分 |
+| 本次 | #17 最小修复：`configEffective` 区分配置值与生效值 |
+
+### 校准结果
+
+| 项 | 数值 |
+|---|---|
+| 测试总数 | 115 → **142** |
+| 新增用例 | volatile 桩 8 + routingMode 18 + configEffective 9 |
+| `npm test` | 142/142 通过 |
+| `npm run doctor` | FAIL 0 · WARN 1 |
+
+### 与初版报告的三处差异（均由评审纠正）
+
+| 项 | 初版 | 实际落地 |
+|---|---|---|
+| #18 修法 | `lastCfgMode = null` | `loadState()` 返回 `{found, mode}`，由 `found` 决定初值 |
+| 状态文件清理 | 建议删除整个文件 | 新增 `resetRoutingMode()`，只移除 `routingMode` 键 |
+| #17 影响描述 | 「实际影响：零」 | 「当前部署未触发，但代码存在可复现的配置行为限制」 |

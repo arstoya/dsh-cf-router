@@ -115,6 +115,53 @@ Upstream connections are always made with `https.request` on port 443 with `serv
 | `cf_router_reset` | Clear failure counters, cooldowns and connection pools |
 | `cf_router_mode` | Switch `auto` / `direct` and persist it; without an argument it reports the current value |
 
+### Configuration floors
+
+Some values have hard floors. They are **not** silently applied — `GET /__router/status` reports both what you configured and what actually runs, under `configEffective`:
+
+```json
+"configEffective": {
+  "firstByteTimeoutMs": { "configured": 300, "effective": 5000, "floorMs": 5000 }
+}
+```
+
+| Field | Floor | Why |
+| --- | --- | --- |
+| `firstByteTimeoutMs` | 5000 ms | `setTimeout(0)` would abort every request immediately |
+| `cooldownMs` | 1000 ms | shorter cooldowns cause flapping between candidates |
+| `probeIntervalMs` | 30000 ms | probing every second would look like a scan to the edge |
+| `healthCheckMs` | 5000 ms | same reason as above |
+| `ewmaMaxMs` | 200 ms | classification threshold for `*OverCap`; below this every sample would be "over cap" |
+
+**There are no upper bounds.** Long-running inference legitimately needs `firstByteTimeoutMs` in the hundreds of seconds; capping it would create a new silent rewrite of the very kind these floors are trying to expose.
+
+All values are in milliseconds.
+
+### routingMode resolution
+
+`routingMode` has three sources, and `GET /__router/status` reports all of them under `routingModeSources`:
+
+```json
+"routingModeSources": {
+  "configMode": "direct",
+  "stateFileMode": "auto",
+  "effectiveMode": "auto",
+  "stateFileWins": true
+}
+```
+
+Resolution at startup:
+
+| stateFile | config | effective |
+| --- | --- | --- |
+| absent / no valid value | `direct` | `direct` |
+| `auto` | `direct` | `auto` (stateFile wins) |
+| `direct` | `auto` | `direct` (stateFile wins) |
+
+When `stateFileWins` is true, the runtime value comes from a previous `setRoutingMode()` call. To make the configuration take effect again, call `resetRoutingMode` (it removes only the `routingMode` key and keeps any other state in the file) rather than deleting `stateFile` wholesale.
+
+`direct` mode keeps background probing and health checks running, so switching back to `auto` can immediately use fresh measurements. This is deliberate, not a leak.
+
 ### Per-candidate metrics
 
 Since v0.2.1 each candidate reports six independent EWMA values. Every one of them is measured from a single well-defined event pair — nothing is mixed, and a value that cannot be measured is `null` rather than guessed.
