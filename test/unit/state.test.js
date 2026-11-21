@@ -31,16 +31,32 @@ test('DEFAULTS 与 Config 默认值逐字段一致', () => {
   // Config 用 stub 的 .default() 真值构造一次空输入，拿到「全默认」对象
   const built = mod.Config({})
   const diffs = []
+
+  /** 取出可比较的值：volatile 字段是引用对象，取其中的当前值 */
+  const plain = (v) => {
+    if (v && typeof v === 'object' && typeof v.get === 'function') return v.get()
+    return v
+  }
+
   for (const [key, def] of Object.entries(mod.DEFAULTS)) {
     if (!(key in built)) { diffs.push(`${key}: DEFAULTS 有但 Config 没有`); continue }
     const a = JSON.stringify(def)
-    const b = JSON.stringify(built[key])
+    const b = JSON.stringify(plain(built[key]))
     if (a !== b) diffs.push(`${key}: DEFAULTS=${a} Config=${b}`)
   }
   for (const key of Object.keys(built)) {
     if (!(key in mod.DEFAULTS)) diffs.push(`${key}: Config 有但 DEFAULTS 没有`)
   }
   assert.deepEqual(diffs, [], 'DEFAULTS 与 Config 不一致，改一边必须改另一边')
+})
+
+test('routingMode 在 Config 里是 volatile 引用，DEFAULTS 里是纯值', () => {
+  // 这两者形态不同是**正确**的：DEFAULTS 是给 __testApi.configure 用的纯数据副本，
+  // 而 Config 走生产路径必须产出 volatile 引用（见 volatile-stub.test.js）。
+  const built = mod.Config({})
+  assert.equal(typeof built.routingMode, 'object')
+  assert.equal(typeof built.routingMode.get, 'function')
+  assert.equal(typeof mod.DEFAULTS.routingMode, 'string')
 })
 
 test('statusSnapshot 基本形状', () => {
