@@ -51,6 +51,10 @@ export function setupPlugin(overrides = {}, opts = {}) {
     targets: ['localhost'],
     discoverEnabled: false,
     stateFile: tempStateFile(),
+    // 测试一律打本机 https fixture（127.0.0.1），需要显式放开地址分类层。
+    // 第一层格式校验与第二层白名单仍然生效 —— 这恰好验证了「放开地址层
+    // 不等于放开授权」。
+    allowPrivateTargets: true,
     ...overrides,
   }
   // 若调用方显式给了 stateFile（比如测试持久化本身），尊重它

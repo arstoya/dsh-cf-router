@@ -104,6 +104,21 @@ after:  http://127.0.0.1:8787/v1/chat/completions
 
 The target is chosen from the `Host` header. When the `Host` is the local proxy address itself, the first entry of `targets` is used. You can also override per request with `x-cf-target: <domain>`.
 
+**`x-cf-target` does not grant permission by itself.** Both `Host` and `x-cf-target` go through the same four-layer guard, and the resolved domain must be an exact match for an entry in `targets` — no suffix or wildcard matching:
+
+| Layer | What it does |
+| --- | --- |
+| Authority parsing | Structured parse instead of `split(':')`. Rejects schemes, paths, queries, userinfo, IPv6 literals, IP literals, decimal/hex IP disguises, bad ports, multi-value Host, control characters. Normalizes case and trailing dots. |
+| Allowlist | Exact match against normalized `targets`. Unconfigured domains are refused; there is no "forward any public host" behaviour. |
+| Address class | Every resolved address must be globally routable. Loopback, RFC1918, link-local, CGNAT, multicast, reserved and documentation ranges are rejected — and a **mixed** result is rejected outright rather than picking a safe entry. |
+| DNS rebinding | The validated resolution is the one used for connecting. A domain that resolves public first and private later is re-validated and refused on the second pass. |
+
+`direct` mode is **not** an exemption — it changes IP pinning, not authorization. Both modes go through the same guard.
+
+Refused targets return `403 target_not_allowed` (not in the allowlist) or `400 invalid_target` (malformed), and no upstream socket is opened.
+
+If you genuinely need a private/local target (local development, trusted LAN), set `allowPrivateTargets: true`. The allowlist and format checks still apply.
+
 Upstream connections are always made with `https.request` on port 443 with `servername` set, and there is no redirect-following code, so a request can never be silently downgraded or lose its `Authorization` header.
 
 ### Tools registered
@@ -201,7 +216,7 @@ Useful for scripting without the tools:
 ## Limits
 
 - IPv4 edge selection only. It does not touch the system network stack, `hosts`, or prefix policy.
-- Only domains in `targets` (or named by `x-cf-target`) are optimized; everything else is forwarded as-is.
+- Only domains in `targets` are forwarded at all. `x-cf-target` selects among those; it cannot name a new one.
 - Request bodies are not compressed (that would need upstream support).
 - The proxy lives inside the host process and is rebuilt by `apply()` after a DSH restart.
 - Requires the host-provided `@deepseek-ai/*` packages; it cannot run outside DSH.

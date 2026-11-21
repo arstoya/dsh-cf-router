@@ -23,7 +23,10 @@
       name: dsh-cf-router
       inject: [ tools ]
       config:
-        # 要优选的域名。留空则代理一律回 400 no_target，不会瞎转发。
+        # 要优选的域名，同时是**唯一的授权白名单**（Issue #6）。
+        # 留空则代理一律回 400 no_target；不在这里的域名一律 403，包括 x-cf-target 指定的。
+        # 精确匹配，不做到后缀/通配；格式非法（含 IP 字面量、带协议/路径）的条目在装载期被剔除，
+        # 剔除原因见 GET /__router/status 的 rejectedTargets。
         targets:
           - "api.example.com"
         listenHost: "127.0.0.1"
@@ -57,6 +60,9 @@
         ewmaMaxMs: 3000
         firstByteTimeoutMs: 60000
         allowDirectFallback: true
+        # SSRF 第三层：是否允许目标解析到私网/回环/链路本地地址。默认 false。
+        # 仅在本地开发或受信内网部署时开启；白名单与格式校验仍然生效。
+        allowPrivateTargets: false
         # auto   = 优选最快的 IPv4，失败自动切换（默认）
         # direct = 不做优选，按系统 DNS 直连（仍经过本地代理，用于排查优选本身的问题）
         # 运行时可用 cf_router_mode 工具或 GET /__router/mode?value= 切换，选择写入 stateFile 并保留

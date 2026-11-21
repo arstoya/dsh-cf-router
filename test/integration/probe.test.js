@@ -30,6 +30,7 @@ async function withUpstream(fixtureOpts = {}, cfgOverrides = {}) {
     probePath: '/probe',
     l1Concurrency: 1,
     l2TopN: 1,
+    allowPrivateTargets: true,
     ...cfgOverrides,
   })
   return up
@@ -41,24 +42,47 @@ test.afterEach(() => mod.__resetForTest())
 
 test('DNS 成功：resolveIps 返回去重后的 IPv4 列表', async () => {
   api.reset()
+  api.configure({ targets: [], allowPrivateTargets: true })
   api.deps.resolve4 = (host, cb) => cb(null, ['203.0.113.1', '203.0.113.1', '203.0.113.2'])
-  const ips = await api.resolveIps('x.test')
-  assert.deepEqual(ips, ['203.0.113.1', '203.0.113.2'])
+  const r = await api.resolveIps('x.test')
+  assert.deepEqual(r.ips, ['203.0.113.1', '203.0.113.2'])
+  assert.deepEqual(r.blocked, [], '公网地址不该被拦')
 })
 
-test('DNS 失败：返回空数组而不是抛错', async () => {
+test('DNS 失败：返回空 ips 而不是抛错', async () => {
   api.reset()
+  api.configure({ targets: [], allowPrivateTargets: true })
   api.deps.resolve4 = (host, cb) => cb(new Error('ENOTFOUND'), null)
-  assert.deepEqual(await api.resolveIps('x.test'), [])
+  assert.deepEqual((await api.resolveIps('x.test')).ips, [])
 
   api.deps.resolve4 = (host, cb) => cb(null, [])
-  assert.deepEqual(await api.resolveIps('x.test'), [])
+  assert.deepEqual((await api.resolveIps('x.test')).ips, [])
+})
+
+test('DNS 解析到受保护地址时整体拒绝（Issue #6 第三层）', async () => {
+  api.reset()
+  api.configure({ targets: [], allowPrivateTargets: false })
+  // 混合结果：一条公网 + 一条回环。不能「挑公网的用」，要整体拒绝
+  api.deps.resolve4 = (host, cb) => cb(null, ['8.8.8.8', '127.0.0.1'])
+  const r = await api.resolveIps('x.test')
+
+  assert.deepEqual(r.ips, [], '命中黑名单必须整体拒绝')
+  assert.ok(r.blocked.length >= 1 || r.blocked[0], '应给出命中原因')
+})
+
+test('allowPrivateTargets=true 时才放行私网地址', async () => {
+  api.reset()
+  api.configure({ targets: [], allowPrivateTargets: true })
+  api.deps.resolve4 = (host, cb) => cb(null, ['127.0.0.1'])
+  const r = await api.resolveIps('x.test')
+  assert.deepEqual(r.ips, ['127.0.0.1'])
+  assert.deepEqual(r.blocked, [])
 })
 
 test('DNS 全失败时 refreshHost 记录错误但不抛', async () => {
   api.reset()
   api.deps.resolve4 = (host, cb) => cb(null, [])
-  api.configure({ targets: [HOST], discoverEnabled: false })
+  api.configure({ targets: [HOST], discoverEnabled: false, allowPrivateTargets: true })
   const entry = await api.refreshHost(HOST)
   assert.equal(entry.error, 'DNS 无 A 记录')
   assert.deepEqual(entry.results, [])
@@ -94,7 +118,7 @@ test('TLS 握手失败：证书不受信任时探测判失败', async () => {
     api.deps.upstreamPort = up.port
     api.deps.tlsOptions = {}          // 故意不给 CA
     api.deps.resolve4 = (host, cb) => cb(null, ['127.0.0.1'])
-    api.configure({ targets: [HOST], discoverEnabled: false, probeSamples: 1, probeTimeoutMs: 2000 })
+    api.configure({ targets: [HOST], discoverEnabled: false, probeSamples: 1, probeTimeoutMs: 2000, allowPrivateTargets: true })
 
     const r = await api.probeOnce(HOST, '127.0.0.1', 2000, '/probe')
     assert.equal(r.ok, false, '证书校验失败应判失败')
@@ -155,7 +179,7 @@ test('连接重置：判失败而不是挂住', async () => {
 test('measureIp：样本取中位数，全部成功才算 okCount', async () => {
   const up = await withUpstream({ status: 200 })
   try {
-    api.configure({ targets: [HOST], discoverEnabled: false, probeSamples: 3, probeTimeoutMs: 2000 })
+    api.configure({ targets: [HOST], discoverEnabled: false, probeSamples: 3, probeTimeoutMs: 2000, allowPrivateTargets: true })
     const r = await api.measureIp(HOST, '127.0.0.1', 3, 2000, '/probe')
     assert.equal(r.okCount, 3)
     assert.equal(r.samples, 3)
@@ -183,7 +207,7 @@ test('refreshHost：写入 hosts 并按延迟排序', async () => {
 test('coloAllow 过滤：colo 不匹配的候选被标记 excluded', async () => {
   const up = await withUpstream({ status: 200 })
   try {
-    api.configure({ targets: [HOST], discoverEnabled: false, probeSamples: 1, coloAllow: ['SIN'] })
+    api.configure({ targets: [HOST], discoverEnabled: false, probeSamples: 1, coloAllow: ['SIN'], allowPrivateTargets: true })
     const r = await api.measureIp(HOST, '127.0.0.1', 1, 2000, '/probe')
     // 本地服务没有 cf-ray，colo 为空 → 不在白名单 → 被排除
     assert.match(String(r.excluded), /colo/)
