@@ -207,11 +207,41 @@ v0.2.1 起每个候选上报六个独立 EWMA。每一个都只由一对明确�
 
 | 端点 | 效果 |
 | --- | --- |
-| `GET /__router/status` | 与 `cf_router_status` 相同的载荷 |
-| `GET /__router/probe` | 重新探测，然后返回状态 |
-| `GET /__router/reset` | 清空计数与连接池 |
-| `GET /__router/mode` | 报告当前模式 |
-| `GET /__router/mode?value=direct` | 切换模式 |
+方法语义遵循 HTTP 约定：读用 `GET`，任何有副作用的操作用 `POST`。
+
+| 方法 | 路径 | 请求体 | 作用 |
+| --- | --- | --- | --- |
+| `GET` | `/__router/status` | — | 与 `cf_router_status` 相同的载荷 |
+| `GET` | `/__router/mode` | — | 报告当前模式与它的三个来源 |
+| `POST` | `/__router/mode` | `{"mode":"direct"}` | 切换模式并持久化 |
+| `POST` | `/__router/probe` | 空 | 重新探测，然后返回状态 |
+| `POST` | `/__router/reset` | 空 | 清空运行时统计、冷却与连接池 |
+| `POST` | `/__router/reset-mode` | 空 | 只清持久化的 `routingMode` |
+
+旧的 `GET /__router/mode?value=direct` 写法返回 `405` 且 `Allow: GET, POST` —— 这条路径本身两种方法都支持，被拒的是「用 GET 改状态」这种**写法**。
+
+```bash
+curl -X POST -H 'content-type: application/json'      -d '{"mode":"direct"}' http://127.0.0.1:8787/__router/mode
+```
+
+错误响应统一格式：
+
+```json
+{ "ok": false, "error": "invalid_value", "message": "mode 必须是 auto 或 direct", "field": "mode" }
+```
+
+| 状态 | `error` | 触发条件 |
+| --- | --- | --- |
+| 400 | `invalid_json` | 请求体不是合法 JSON / 不是对象 |
+| 400 | `missing_field` | 必填字段缺失（或为 `undefined`） |
+| 400 | `unknown_field` | 该接口不接受的字段 |
+| 400 | `invalid_value` | 提供了字段但值非法（如 `mode: null`） |
+| 405 | `method_not_allowed` | 方法不对；`Allow` 头列出可用方法 |
+| 413 | `payload_too_large` | 管理接口请求体超过 64 KiB |
+| 415 | `unsupported_media_type` | 带了非 JSON 的 `Content-Type` |
+| 401 / 403 | `unauthorized` / `forbidden` | 为鉴权层保留（Issue #8） |
+
+**这些端点目前尚未鉴权**（Issue #8）。请只监听回环地址。默认不再发送 `Access-Control-Allow-Origin`；确需跨源浏览器访问时配置 `corsAllowOrigin`。
 
 ## 局限
 

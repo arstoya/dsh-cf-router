@@ -63,6 +63,13 @@
         # SSRF 第三层：是否允许目标解析到私网/回环/链路本地地址。默认 false。
         # 仅在本地开发或受信内网部署时开启；白名单与格式校验仍然生效。
         allowPrivateTargets: false
+        # 管理接口（Issue #7）：读用 GET，有副作用的操作用 POST。
+        #   GET  /__router/{status,mode}
+        #   POST /__router/{mode,probe,reset,reset-mode}
+        # 默认不再发送 Access-Control-Allow-Origin（避免任意网页跨站调用管理接口）。
+        # 确需跨源浏览器访问时在此填单个来源，例如 "https://example.com"。
+        corsAllowOrigin: ""
+        # ⚠ 管理接口尚未鉴权（Issue #8），请只监听回环地址。
         # auto   = 优选最快的 IPv4，失败自动切换（默认）
         # direct = 不做优选，按系统 DNS 直连（仍经过本地代理，用于排查优选本身的问题）
         # 运行时可用 cf_router_mode 工具或 GET /__router/mode?value= 切换，选择写入 stateFile 并保留

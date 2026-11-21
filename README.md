@@ -207,11 +207,41 @@ Useful for scripting without the tools:
 
 | Endpoint | Effect |
 | --- | --- |
-| `GET /__router/status` | Same payload as `cf_router_status` |
-| `GET /__router/probe` | Re-probe, then return status |
-| `GET /__router/reset` | Reset counters and pools |
-| `GET /__router/mode` | Report current mode |
-| `GET /__router/mode?value=direct` | Switch mode |
+Method semantics follow HTTP conventions: reads are `GET`, anything with a side effect is `POST`.
+
+| Method | Path | Body | Effect |
+| --- | --- | --- | --- |
+| `GET` | `/__router/status` | — | Same payload as `cf_router_status` |
+| `GET` | `/__router/mode` | — | Report current mode and its sources |
+| `POST` | `/__router/mode` | `{"mode":"direct"}` | Switch mode and persist it |
+| `POST` | `/__router/probe` | empty | Re-probe, then return status |
+| `POST` | `/__router/reset` | empty | Clear runtime counters, cooldowns and pools |
+| `POST` | `/__router/reset-mode` | empty | Clear only the persisted `routingMode` |
+
+The legacy `GET /__router/mode?value=direct` form is rejected with `405` and `Allow: GET, POST` — the path genuinely supports both methods, only that *form* of mutating via GET is refused.
+
+```bash
+curl -X POST -H 'content-type: application/json'      -d '{"mode":"direct"}' http://127.0.0.1:8787/__router/mode
+```
+
+Error responses share one shape:
+
+```json
+{ "ok": false, "error": "invalid_value", "message": "mode must be auto or direct", "field": "mode" }
+```
+
+| Status | `error` | When |
+| --- | --- | --- |
+| 400 | `invalid_json` | body is not valid JSON / not an object |
+| 400 | `missing_field` | required field absent (or `undefined`) |
+| 400 | `unknown_field` | field not accepted by that endpoint |
+| 400 | `invalid_value` | value present but out of range (e.g. `mode: null`) |
+| 405 | `method_not_allowed` | wrong method; `Allow` header lists the accepted ones |
+| 413 | `payload_too_large` | control body over 64 KiB |
+| 415 | `unsupported_media_type` | body sent with a non-JSON `Content-Type` |
+| 401 / 403 | `unauthorized` / `forbidden` | reserved for the auth layer (Issue #8) |
+
+**These endpoints are not authenticated yet** (Issue #8). Listen on loopback only. There is no unconditional `Access-Control-Allow-Origin`; set `corsAllowOrigin` if you really need cross-origin browser access.
 
 ## Limits
 
