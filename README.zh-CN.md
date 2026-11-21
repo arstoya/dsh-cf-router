@@ -269,6 +269,22 @@ curl -X POST -H 'content-type: application/json'      -H "Authorization: Bearer 
 
 进程内的 DSH 工具调用（`cf_router_*`）不经过 HTTP，不受以上任何一条影响。
 
+## Header 处理
+
+代理夹在客户端与上游之间，必须守住**端到端 / 逐跳**边界（RFC 7230 §6.1），而不是「看着特殊就删」。
+
+| 类别 | 例子 | 行为 |
+| --- | --- | --- |
+| 端到端 | `content-encoding`、`content-type`、`authorization`、`accept-encoding`、`x-request-id` | 原样转发 —— 删掉 `content-encoding` 客户端就解不开 gzip |
+| 逐跳 | `connection`、`keep-alive`、`proxy-authenticate`、`proxy-authorization`、`te`、`trailer`、`transfer-encoding`、`upgrade` | 双向剥离 |
+| 动态声明 | `Connection: X-Internal` 里列出的任意字段 | 同样剥离 —— 那是逐跳声明，`X-Internal` 不该泄漏 |
+
+`transfer-encoding` 两边都不出现：framing 由 Node 根据实际流重新决定。上游声明 chunked 时，同时出现的 `content-length` 一律丢弃，不予采信。
+
+`Expect: 100-continue` **不转发**。请求体立即开始流动，没有与上游协商 `100` 的窗口；透传这个头会让客户端等待一个已经不存在的跳。`x-cf-target` 在上游之前剥掉。
+
+SSE 额外加 `x-accel-buffering: no`、缺省补 `cache-control: no-cache`、并 `setNoDelay` —— 否则事件会攒批到达而不是边产生边发。
+
 ## 局限
 
 - 只做 IPv4 边缘优选。不碰系统网络栈、不改 `hosts`、不动前缀策略。

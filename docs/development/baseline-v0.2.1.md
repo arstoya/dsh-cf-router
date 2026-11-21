@@ -33,7 +33,7 @@
 
 | 检查 | 结果 |
 |---|---|
-| `npm test` | **220 tests / 220 pass / 0 fail**，约 30 秒（含首字节超时与 8MB 取消用例） |
+| `npm test` | **237 tests / 237 pass / 0 fail**，约 35 秒 |
 | `npm run doctor` | FAIL 0 · WARN 1 · 17 项（与开工前一致，未被破坏） |
 | 连续三次 `npm test` | 三次均 106/106，结果一致 |
 | 外网依赖 | 无。全部走本地 HTTPS fixture（自签证书） |
@@ -261,7 +261,7 @@ const ctx = { upstreamSettled, upstreamEnded, clientAborted, released }
 
 ```bash
 git checkout v0.1.0        # 回到本基准
-npm test                   # 220 tests / 220 pass
+npm test                   # 237 tests / 237 pass
 npm run doctor             # FAIL 0 · WARN 1（端口占用）
 ```
 

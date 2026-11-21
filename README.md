@@ -269,6 +269,22 @@ Three layers guard the endpoints:
 
 In-process DSH tool calls (`cf_router_*`) do not go through HTTP and are not affected by any of this.
 
+## Header handling
+
+The proxy sits between the client and the upstream, so it has to respect the **end-to-end vs hop-by-hop** boundary (RFC 7230 §6.1) rather than deleting whatever looks unusual.
+
+| Class | Examples | Behaviour |
+| --- | --- | --- |
+| End-to-end | `content-encoding`, `content-type`, `authorization`, `accept-encoding`, `x-request-id` | Forwarded untouched — dropping `content-encoding` would make gzip responses undecodable |
+| Hop-by-hop | `connection`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `te`, `trailer`, `transfer-encoding`, `upgrade` | Stripped in both directions |
+| Dynamically declared | anything named in `Connection: X-Internal` | Stripped too — that header is a per-hop declaration, so `X-Internal` must not leak |
+
+`transfer-encoding` never reaches either side: framing is re-decided by Node from the actual stream. When the upstream declares chunked, a `content-length` alongside it is discarded rather than trusted.
+
+`Expect: 100-continue` is **not forwarded**. The request body starts streaming immediately, so there is no window to negotiate a `100` with the upstream; passing the header through would leave the client waiting on a hop that no longer exists. `x-cf-target` is stripped before forwarding.
+
+SSE additionally gets `x-accel-buffering: no`, `cache-control: no-cache` when absent, and `setNoDelay` — otherwise events arrive in batches instead of as they are produced.
+
 ## Limits
 
 - IPv4 edge selection only. It does not touch the system network stack, `hosts`, or prefix policy.
