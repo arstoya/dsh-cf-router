@@ -353,6 +353,24 @@ The proxy sits between the client and the upstream, so it has to respect the **e
 
 SSE additionally gets `x-accel-buffering: no`, `cache-control: no-cache` when absent, and `setNoDelay` — otherwise events arrive in batches instead of as they are produced.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request, across Node 20 / 22 / 24.
+
+What it enforces:
+
+| Step | Blocking | Why |
+| --- | --- | --- |
+| `node --check` on every source file | yes | A syntax error must fail immediately, not hide behind a soft check |
+| `npm test` | yes | The 498-test baseline |
+| `git diff --check` | yes | Whitespace errors |
+| No state files committed | yes | `.token`, `admin-token*`, `cf-router-state.json` must never enter the repo |
+| `npm run doctor` | **no** | Three of its checks depend on a real host (`DSH_HOME`, host `@deepseek-ai/*`, port 8787) and cannot hold in CI. Its output stays in the log for manual reading |
+
+It does **not** run `npm ci`: this package has no dependencies (`devDependencies` is null) and no lockfile, so that command would fail rather than help.
+
+Node 26 is deliberately absent from the matrix — it is not an LTS, and a failure there could not be attributed to the code rather than to an experimental V8 behaviour. Local development uses 26; CI verifies LTS.
+
 ## Version
 
 `0.2.2` — see [CHANGELOG.md](CHANGELOG.md) for what changed and what breaks on upgrade.

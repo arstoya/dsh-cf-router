@@ -1,0 +1,73 @@
+name: ci
+
+# 目的：锁定当前行为（498 项测试），为 v0.3.0 的持久化扩展与模块拆分提供归因基线。
+# 只跑静态可验证的检查，不依赖任何真实 DSH 宿主或 Cloudflare 上游。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支只保留最新一次运行，避免旧提交占着 runner
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      # 一个版本挂了不影响其它版本跑完 —— 需要知道是「全都挂」还是「只有高版本挂」
+      fail-fast: false
+      matrix:
+        # 本项目零第三方依赖，只用 node:test / node:assert，所以在多个 LTS 上跑成本很低。
+        # 本地开发用 Node 26（非 LTS），刻意不放进矩阵：它一旦挂，无法区分是代码问题
+        # 还是「非 LTS 版本的实验性行为」。
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 不跑 npm ci：devDependencies 为 null，仓库里也没有 lockfile。
+      # 跑它只会因缺少 lockfile 而失败，或生成一份不该提交的锁文件。
+
+      - name: 语法检查（硬性）
+        # doctor 里的 node --check 是可选的，这里把它独立成硬性步骤：
+        # 语法错必须立刻失败，不能被 doctor 的 continue-on-error 掩盖。
+        run: |
+          for f in lib/*.js lib/*.mjs scripts/*.mjs test/**/*.js; do
+            [ -f "$f" ] || continue
+            node --check "$f" || exit 1
+          done
+          echo "node --check 全部通过"
+
+      - name: 测试
+        run: npm test
+
+      - name: 空白错误
+        run: git diff --check
+
+      - name: 插件自检（参考）
+        # doctor 有 3 项依赖宿主环境（DSH_HOME / 宿主 @deepseek-ai/* / 端口占用），
+        # 在 CI 里必然与实际部署不同，所以标为参考而不阻断。
+        # 但它的输出仍保留在日志里，便于人工核对 package.json 与 bundle patch 结构。
+        continue-on-error: true
+        run: npm run doctor
+
+      - name: 状态文件未入库
+        # 管理 Token 与运行态文件绝不能进仓库（CHANGELOG 与 .gitignore 都承诺过）
+        run: |
+          if git ls-files | grep -qE '(\.token$|^admin-token|cf-router-state\.json$)'; then
+            echo "::error::状态文件或 Token 被提交进仓库"
+            git ls-files | grep -E '(\.token$|^admin-token|cf-router-state\.json$)'
+            exit 1
+          fi
+          echo "无状态文件入库"

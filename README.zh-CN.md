@@ -353,6 +353,24 @@ curl -X POST -H 'content-type: application/json'      -H "Authorization: Bearer 
 
 SSE 额外加 `x-accel-buffering: no`、缺省补 `cache-control: no-cache`、并 `setNoDelay` —— 否则事件会攒批到达而不是边产生边发。
 
+## 持续集成
+
+`.github/workflows/ci.yml` 在每次推送到 `main` 与每个 PR 上运行，矩阵覆盖 Node 20 / 22 / 24。
+
+强制项：
+
+| 步骤 | 阻断 | 为什么 |
+| --- | --- | --- |
+| 每个源文件跑 `node --check` | 是 | 语法错必须立刻失败，不能被软检查掩盖 |
+| `npm test` | 是 | 498 项测试基线 |
+| `git diff --check` | 是 | 空白错误 |
+| 状态文件未入库 | 是 | `.token`、`admin-token*`、`cf-router-state.json` 绝不能进仓库 |
+| `npm run doctor` | **否** | 其中 3 项依赖真实宿主（`DSH_HOME`、宿主 `@deepseek-ai/*`、端口 8787），CI 里不可能成立。输出仍留在日志里供人工核对 |
+
+**不跑 `npm ci`**：本包零依赖（`devDependencies` 为 null），也没有 lockfile，跑它只会失败而不是帮忙。
+
+矩阵刻意不含 Node 26 —— 它不是 LTS，一旦挂掉无法区分是代码问题还是实验性 V8 行为。本地开发用 26，CI 验证 LTS。
+
 ## 版本
 
 `0.2.2` —— 变更与升级注意事项见 [CHANGELOG.md](CHANGELOG.md)。
