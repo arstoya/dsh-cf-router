@@ -58,14 +58,14 @@ test('写入后文件带当前 schema 版本', () => {
   } finally { try { fs.unlinkSync(f) } catch { /* ignore */ } }
 })
 
-test('v0 文件被设置模式后升级为 v1', () => {
+test('v0 文件被设置模式后升级到当前版本', () => {
   const f = tmpPath('upgrade')
   fs.writeFileSync(f, JSON.stringify({ routingMode: 'auto', updatedAt: '2026-11-21T10:00:00.000Z' }), 'utf8')
   try {
     boot(f)
     api.setRoutingMode('direct')
     const raw = JSON.parse(fs.readFileSync(f, 'utf8'))
-    assert.equal(raw.version, 1)
+    assert.equal(raw.version, STATE_SCHEMA_VERSION)
     assert.equal(raw.routingMode, 'direct')
   } finally { try { fs.unlinkSync(f) } catch { /* ignore */ } }
 })
@@ -177,7 +177,7 @@ test('reset-mode 对 v0 文件也能工作（先迁移再删键）', () => {
 
     const raw = JSON.parse(fs.readFileSync(f, 'utf8'))
     assert.equal('routingMode' in raw, false)
-    assert.equal(raw.version, 1, 'v0 文件重置后应升级为 v1')
+    assert.equal(raw.version, STATE_SCHEMA_VERSION, 'v0 文件重置后应升级到当前版本')
   } finally { try { fs.unlinkSync(f) } catch { /* ignore */ } }
 })
 

@@ -14,16 +14,17 @@ const T = 1_700_000_000_000
  * v0 → v1 迁移
  * ============================================================ */
 
-test('v0（无 version）→ v1，routingMode 保留', () => {
+test('v0（无 version）→ 当前版本，routingMode 保留', () => {
   const raw = { routingMode: 'direct', updatedAt: '2026-11-21T10:00:00.000Z' }
   const r = migrateState(raw)
 
   assert.equal(r.ok, true)
   assert.equal(r.fromVersion, 0)
   assert.equal(r.migrated, true)
-  assert.equal(r.state.version, 1)
+  assert.equal(r.state.version, STATE_SCHEMA_VERSION)
   assert.equal(r.state.routingMode, 'direct')
   assert.ok(r.state.updatedAt > 0, 'ISO 字符串应转成毫秒')
+  assert.deepEqual(r.state.hosts, {}, 'v2 起应有空 hosts')
 })
 
 test('v0 的非法 routingMode 被清成 null（不编造）', () => {
@@ -44,9 +45,9 @@ test('迁移保留用户手写的未知字段', () => {
 })
 
 test('已是当前版本 → 不标记 migrated', () => {
-  const r = migrateState({ version: 1, routingMode: 'auto', updatedAt: T })
+  const r = migrateState({ version: STATE_SCHEMA_VERSION, routingMode: 'auto', updatedAt: T, hosts: {} })
   assert.equal(r.ok, true)
-  assert.equal(r.fromVersion, 1)
+  assert.equal(r.fromVersion, STATE_SCHEMA_VERSION)
   assert.equal(r.migrated, false)
   assert.equal(r.state.routingMode, 'auto')
   assert.equal(r.state.updatedAt, T)

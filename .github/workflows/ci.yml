@@ -57,6 +57,11 @@ jobs:
       - name: 测试
         run: npm test
 
+      - name: CONNECT 隧道能力审计
+        # ADR-001 的结论依赖具体 DSH/Node 版本。CI 每次跑一遍，
+        # 一旦宿主或 Node 升级改变了能力，这里会先红，而不是等 D2 开发到一半才发现。
+        run: npm run audit:connect
+
       - name: 空白错误
         run: git diff --check
 

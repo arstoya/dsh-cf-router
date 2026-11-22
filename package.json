@@ -37,7 +37,8 @@
     "doctor": "node scripts/doctor.mjs",
     "test": "node --import ./test/helpers/stub-register.mjs --test \"test/**/*.test.js\"",
     "test:unit": "node --import ./test/helpers/stub-register.mjs --test \"test/unit/**/*.test.js\"",
-    "test:integration": "node --import ./test/helpers/stub-register.mjs --test \"test/integration/**/*.test.js\""
+    "test:integration": "node --import ./test/helpers/stub-register.mjs --test \"test/integration/**/*.test.js\"",
+    "audit:connect": "node scripts/audit/a1-connect.mjs && node scripts/audit/a1-in-plugin.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-tools": "*",
