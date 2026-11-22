@@ -355,7 +355,7 @@ SSE 额外加 `x-accel-buffering: no`、缺省补 `cache-control: no-cache`、�
 
 ## 持续集成
 
-`.github/workflows/ci.yml` 在每次推送到 `main` 与每个 PR 上运行，矩阵覆盖 Node 20 / 22 / 24。
+`.github/workflows/ci.yml` 在每次推送到 `main` 与每个 PR 上运行，矩阵覆盖 Node 22 / 24。
 
 强制项：
 
@@ -369,7 +369,10 @@ SSE 额外加 `x-accel-buffering: no`、缺省补 `cache-control: no-cache`、�
 
 **不跑 `npm ci`**：本包零依赖（`devDependencies` 为 null），也没有 lockfile，跑它只会失败而不是帮忙。
 
-矩阵刻意不含 Node 26 —— 它不是 LTS，一旦挂掉无法区分是代码问题还是实验性 V8 行为。本地开发用 26，CI 验证 LTS。
+刻意排除的两个版本：
+
+- **Node 20** —— `node --test` 在 20 上不支持 glob，`"test/**/*.test.js"` 会被当成字面路径（实测报 `Could not find ...`）。修它要改 test 脚本，属于行为改动，不该混进「建立 CI 基线」这一步。GitHub 也已在 runner 上弃用 20。
+- **Node 26** —— 非 LTS，一旦挂掉无法区分是代码问题还是实验性 V8 行为。本地开发用 26，CI 验证 LTS。
 
 ## 版本
 

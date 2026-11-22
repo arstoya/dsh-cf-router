@@ -355,7 +355,7 @@ SSE additionally gets `x-accel-buffering: no`, `cache-control: no-cache` when ab
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every push to `main` and every pull request, across Node 20 / 22 / 24.
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request, across Node 22 / 24.
 
 What it enforces:
 
@@ -369,7 +369,10 @@ What it enforces:
 
 It does **not** run `npm ci`: this package has no dependencies (`devDependencies` is null) and no lockfile, so that command would fail rather than help.
 
-Node 26 is deliberately absent from the matrix — it is not an LTS, and a failure there could not be attributed to the code rather than to an experimental V8 behaviour. Local development uses 26; CI verifies LTS.
+Two Node versions are deliberately absent:
+
+- **Node 20** — `node --test` there does not expand globs, so the `"test/**/*.test.js"` script is treated as a literal path. Fixing that means changing the test script, which is a behaviour change and does not belong in "establish the CI baseline". GitHub has also deprecated Node 20 on its runners.
+- **Node 26** — not an LTS; a failure there could not be attributed to the code rather than to experimental V8 behaviour. Local development uses 26; CI verifies LTS.
 
 ## Version
 

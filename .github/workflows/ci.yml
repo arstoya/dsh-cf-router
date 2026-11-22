@@ -25,10 +25,15 @@ jobs:
       # 一个版本挂了不影响其它版本跑完 —— 需要知道是「全都挂」还是「只有高版本挂」
       fail-fast: false
       matrix:
-        # 本项目零第三方依赖，只用 node:test / node:assert，所以在多个 LTS 上跑成本很低。
-        # 本地开发用 Node 26（非 LTS），刻意不放进矩阵：它一旦挂，无法区分是代码问题
-        # 还是「非 LTS 版本的实验性行为」。
-        node: [20, 22, 24]
+        # 22 / 24 两个 LTS。刻意排除的两个版本及理由（首次 CI 运行后校正）：
+        #
+        # · Node 20 —— `node --test` 在 20 上不支持 glob，package.json 的
+        #   "test/**/*.test.js" 会被当成字面路径（实测报 Could not find ...），
+        #   而改 test 脚本属于业务配置改动，不该混进「建立 CI 基线」这一步。
+        #   且 GitHub 已在 runner 上弃用 20，checkout/setup-node 都被强制跑在 24 上。
+        # · Node 26 —— 非 LTS，一旦挂掉无法区分是代码问题还是实验性 V8 行为。
+        #   本地开发用 26，验证用 LTS。
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v4
 
