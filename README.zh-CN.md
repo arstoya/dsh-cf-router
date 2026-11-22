@@ -283,6 +283,21 @@ curl -X POST -H 'content-type: application/json'      -H "Authorization: Bearer 
 
 `statusSnapshot().stateSchema` 给出本程序支持的版本、实际读到的版本、以及路径。
 
+### 实际持久化什么（v2）
+
+| 存 | 不存 | 为什么 |
+| --- | --- | --- |
+| 候选池（`probeCount`、`lastSuccessAt`、`source`…） | `recentTtfbMs` 原始观测环 | 环占文件体积约 60%，且只是诊断数据——评分用探测中位数，不依赖它 |
+| 探测指标（`probeTtfbEwmaMs`、`samples.probeTtfb`） | `freshTtfbEwmaMs` / `reusedTtfbEwmaMs` | 真实请求指标重启后本就该重新积累，存陈旧值反而误导选路 |
+| 切换迟滞（`roundsBetter`、`lastSwitchAt`） | `tcpEwmaMs` / `tlsEwmaMs` | 每次连接都会重建 |
+| 健康摘要（`state`、`penaltyUntil`、`enteredAt`） | 连接池、`halfOpenInFlight`、限流桶、`stats` | 进程级瞬态 |
+
+实测体积：现网 7 IP 约 9.6 KiB；3 host × 64 IP 满池约 262 KiB（去掉原始环之前）。
+
+**健康状态保守恢复。** 进程停止时处于 `cooling` 的 IP，即使冷却已过期，重启后也**不会**变回 `healthy`，而是 `half_open`，必须通过一次恢复探测。恢复出的 `cooling`/`half_open` 还会标 `metricsStale`，防止陈旧 EWMA 参与选路。
+
+**写盘有节流。** 状态变化只标脏，在探测完成与正常退出时写盘，最快每 `stateFlushMinIntervalMs`（默认 60 秒）一次。写失败会保留脏标记，下次重试而不是静默丢掉这一批。
+
 ## 线路切换迟滞
 
 选新线路不是「这一轮谁的数字最小」。一次探测只是一个观测，拿两个比就是在比两次运气。四道闸，按顺序：

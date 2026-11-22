@@ -53,6 +53,9 @@
         # 连接池排空超时（Issue #12）。切换线路后旧池等已有请求跑完再销毁；
         # 超过这个时间仍未排空则强制销毁。默认 120 秒，够长 SSE 跑完。
         drainTimeoutMs: 120000
+        # 状态写盘节流（Issue #22）。状态变化只标脏，探测完成/退出时写，
+        # 最快每这么多毫秒一次，避免按 IO 随请求量放大。
+        stateFlushMinIntervalMs: 60000
         # 切换迟滞（Issue #10）：样本量 → 改善幅度 → 连续更优 → 最短驻留。
         # 硬故障（cooling/half_open/不可评分）不受这些约束，立即切走。
         minImprovementRatio: 0.15

@@ -283,6 +283,21 @@ In-process DSH tool calls (`cf_router_*`) do not go through HTTP and are not aff
 
 `statusSnapshot().stateSchema` reports the version this build speaks, the version actually loaded, and the path.
 
+### What actually persists (v2)
+
+| Saved | Not saved | Why |
+| --- | --- | --- |
+| Candidate pool (`probeCount`, `lastSuccessAt`, `source`, …) | `recentTtfbMs` raw ring | The ring is ~60% of the file size and is diagnostic only — scoring uses the probe median, not the ring |
+| Probe metrics (`probeTtfbEwmaMs`, `samples.probeTtfb`) | `freshTtfbEwmaMs` / `reusedTtfbEwmaMs` | Real-request metrics should re-accumulate after a restart; stale values would mislead routing |
+| Switch hysteresis (`roundsBetter`, `lastSwitchAt`) | `tcpEwmaMs` / `tlsEwmaMs` | Rebuilt on every connection anyway |
+| Health summary (`state`, `penaltyUntil`, `enteredAt`) | Connection pools, `halfOpenInFlight`, rate-limit buckets, `stats` | Process-local transients |
+
+Measured size: a live 7-IP host is about 9.6 KiB; a full 3-host × 64-IP pool is about 262 KiB before dropping the raw ring.
+
+**Health is restored conservatively.** An IP that was `cooling` when the process stopped does not come back `healthy` even if its cooldown has expired — it comes back `half_open` and must pass a recovery probe first. Restored `cooling`/`half_open` entries are also flagged `metricsStale`, so stale EWMA cannot drive routing decisions.
+
+**Writes are throttled.** State changes mark the file dirty; it is written on probe completion and on graceful shutdown, at most once per `stateFlushMinIntervalMs` (default 60 s). A failed write keeps the dirty flag so the next attempt retries rather than silently losing the batch.
+
 ## Route switching hysteresis
 
 Picking a new route is not just "whoever has the lowest number this round". A single probe is one observation; comparing two of them is comparing two draws of luck. Four gates, in order:
