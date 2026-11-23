@@ -2,6 +2,10 @@
 
 All notable changes to this project. Versions follow the milestone plan tracked in the issue tracker.
 
+**Release convention**: every version tag gets a matching GitHub Release whose body is
+taken from the section below, plus an install note and the two things that need
+configuring before the plugin does anything useful.
+
 ---
 
 ## [0.3.0] — 2026-11-23

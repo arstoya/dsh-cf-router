@@ -406,6 +406,7 @@ Two Node versions are deliberately absent:
 ## Version
 
 `0.3.0` — see [CHANGELOG.md](CHANGELOG.md) for what changed and what breaks on upgrade.
+Every tag has a matching [Release](https://github.com/arstoya/dsh-cf-router/releases) with install notes.
 
 ## Limits
 
