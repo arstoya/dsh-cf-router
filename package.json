@@ -1,6 +1,6 @@
 {
   "name": "dsh-cf-router",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "type": "module",
   "description": "Local reverse proxy that pins Cloudflare-fronted API upstreams to the fastest IPv4 edge (probe TCP+TLS+TTFB, keep-alive reuse, automatic failover). A DSH plugin.",
   "keywords": [

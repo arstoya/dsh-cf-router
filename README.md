@@ -401,7 +401,7 @@ Two Node versions are deliberately absent:
 
 ## Version
 
-`0.2.2` — see [CHANGELOG.md](CHANGELOG.md) for what changed and what breaks on upgrade.
+`0.3.0` — see [CHANGELOG.md](CHANGELOG.md) for what changed and what breaks on upgrade.
 
 ## Limits
 

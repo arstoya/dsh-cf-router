@@ -4,6 +4,52 @@ All notable changes to this project. Versions follow the milestone plan tracked 
 
 ---
 
+## [0.3.0] — 2026-11-23
+
+**Milestone: 工程结构与长期可靠性.** 六个 issue 全部完成。
+
+Test count 458 → **588**.
+
+### ⚠️ 一个生产阻断级修复
+
+**`apply()` 不走 `withDefaults`，导致白名单从未初始化**（`e8d5244`）。
+
+`_allowedHosts` 是 `applyTargetGuard()` 派生的字段，不在 schema 里。`apply()` 直接 `cfg = config` 意味着它永远不存在，`targetOf()` 对**任何**目标都返回 `target_not_allowed` —— 生产环境全部 403。
+
+**为什么长期没被发现**：547 项测试全部走 `__testApi.configure()`，那条路径本来就调 `withDefaults`。`apply()` 这条生产路径没有任何测试覆盖。
+
+**为什么 v0.2.2 时代没暴露**：当时装的是 0.1.0（#6 之前，无白名单），stats 里那 2362 个请求是 0.1.0 时代的。
+
+### Added
+
+- **CI baseline (#21)** — GitHub Actions on push / PR, Node 22 / 24. Enforces `node --check` per file, `npm test`, `git diff --check`, "no state files committed", and the CONNECT audit. `npm run doctor` is non-blocking (three of its checks need a real host).
+- **Versioned state persistence v2 (#22)** — candidate pool, probe metrics, switch hysteresis, and health summaries survive restarts. Writes are throttled to one per `stateFlushMinIntervalMs` (default 60 s) and forced on shutdown.
+- **Stability watcher (#15)** — `npm run watch:stability` samples a running proxy to JSONL and analyses trends. `LEAK?` requires both a slope above threshold **and** ≥80% monotonic increments — slope alone extrapolates noise into fake leaks.
+- **Concurrency coverage (#15)** — 9 integration tests: multi-host isolation, same-host `probeGeneration` protection, concurrent candidate writes, agent growth under switching, map sizes across probe rounds.
+- **Docs consistency tests (#23)** — 8 assertions pinning that `docs/reference.md` covers every `statusSnapshot` field, every error code mentioned exists in `lib/`, and both language versions stay structurally aligned.
+- **Reference docs (#23)** — `docs/reference.md` + `docs/reference.zh-CN.md`: status field reference, upgrade guide v0.2.0→v0.2.3, troubleshooting.
+
+### Fixed
+
+- **`apply()` skipped `withDefaults`** (`e8d5244`) — the allowlist was empty on the production path, so every request returned 403. Regression test `apply-path.test.js` exercises `apply()` only, never `configure()`.
+- **Cooling IPs bypassed health filtering during L1 probing** — the TCP pre-filter fell back to the raw DNS list instead of the health-filtered one, re-probing cooling IPs. Only triggered when candidates exceeded `l2TopN`.
+- **Expired probe generations wrote shared statistics** — `probeGeneration` only guarded the `hosts` commit, so a stale round still wrote candidate metadata and probe samples. Worst effect: it inflated `samples.probeTtfb`, prematurely satisfying the `minSamples` gate that hysteresis depends on.
+- **`retryable` was always `true`** — `spec.category !== 'protocol' || true`. Protocol errors such as expired certificates are now correctly non-retryable.
+- **Cooling retention used `lastProbeAt`** — an IP cooled by a real request failure had never been probed, so `lastProbeAt` was 0 and it got no retention window. Now uses `health.enteredAt`.
+
+### Changed
+
+- `lib/index.js`: 3516 → 3325 lines. Three pure-function modules extracted: `net-util.mjs`, `metrics.mjs`, `config-normalize.mjs`.
+- CI matrix is Node 22 / 24, not 20. `node --test` does not expand globs before Node 22, and GitHub has deprecated Node 20 on its runners.
+
+### Notes
+
+- **Module splitting is incomplete.** 78% of `index.js` still depends on 40 module-level singletons. Splitting those requires a state-container refactor (implicit globals → explicit passing), which is an architectural change rather than moving code. `docs/development/module-boundaries.md` records the dependency graph and the remaining path.
+- **The 24-hour soak has not been run.** The watcher is delivered and its analysis logic is tested, but no full-day trend data exists.
+- **`recentTtfbMs` is deliberately not persisted.** It is ~60% of the file size and is diagnostic only — scoring uses the probe median.
+
+---
+
 ## [0.2.2] — 2026-11-21
 
 **Milestone: 健康管理与智能选路** — issues #9, #10, #11, #12.
