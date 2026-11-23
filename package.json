@@ -35,7 +35,8 @@
     "README.md",
     "README.zh-CN.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/marketplace-submission.md"
   ],
   "scripts": {
     "doctor": "node scripts/doctor.mjs",
