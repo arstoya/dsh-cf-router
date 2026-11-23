@@ -2,9 +2,10 @@
 
 All notable changes to this project. Versions follow the milestone plan tracked in the issue tracker.
 
-**Release convention**: every version tag gets a matching GitHub Release that lists
-what was fixed and what was added — a condensed version of the section below.
-Details and rationale stay in this file; the release page is for scanning.
+**Release convention**: every version tag gets a matching GitHub Release whose body is
+the list of issues that version closes (with a link-free table of `#N | 内容`),
+followed by behavior changes worth flagging and anything left unfinished.
+Details and rationale stay in this file; the release page answers "what shipped".
 
 ---
 
