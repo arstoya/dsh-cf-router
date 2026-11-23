@@ -1,0 +1,4 @@
+{"at":1795421174618,"rssMB":294.82421875,"pid":56168,"requests":51,"errors":0,"switches":1,"timeouts":0,"activePools":1,"drainingPools":0,"totalInFlight":0,"hosts":1,"candidatePools":64,"healthy":10,"cooling":0,"halfOpen":0,"dirty":true}
+{"at":1795421179838,"rssMB":298.25390625,"pid":56168,"requests":51,"errors":0,"switches":1,"timeouts":0,"activePools":1,"drainingPools":0,"totalInFlight":0,"hosts":1,"candidatePools":64,"healthy":10,"cooling":0,"halfOpen":0,"dirty":true}
+{"at":1795421185059,"rssMB":298.07421875,"pid":56168,"requests":51,"errors":0,"switches":1,"timeouts":0,"activePools":1,"drainingPools":0,"totalInFlight":0,"hosts":1,"candidatePools":64,"healthy":10,"cooling":0,"halfOpen":0,"dirty":true}
+{"at":1795421190252,"rssMB":297.9375,"pid":56168,"requests":51,"errors":0,"switches":1,"timeouts":0,"activePools":1,"drainingPools":0,"totalInFlight":0,"hosts":1,"candidatePools":64,"healthy":10,"cooling":0,"halfOpen":0,"dirty":true}

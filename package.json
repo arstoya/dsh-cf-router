@@ -38,7 +38,8 @@
     "test": "node --import ./test/helpers/stub-register.mjs --test \"test/**/*.test.js\"",
     "test:unit": "node --import ./test/helpers/stub-register.mjs --test \"test/unit/**/*.test.js\"",
     "test:integration": "node --import ./test/helpers/stub-register.mjs --test \"test/integration/**/*.test.js\"",
-    "audit:connect": "node scripts/audit/a1-connect.mjs && node scripts/audit/a1-in-plugin.mjs"
+    "audit:connect": "node scripts/audit/a1-connect.mjs && node scripts/audit/a1-in-plugin.mjs",
+    "watch:stability": "node scripts/watch-stability.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-tools": "*",
