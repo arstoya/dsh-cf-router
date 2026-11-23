@@ -389,6 +389,16 @@ Two Node versions are deliberately absent:
 - **Node 20** — `node --test` there does not expand globs, so the `"test/**/*.test.js"` script is treated as a literal path. Fixing that means changing the test script, which is a behaviour change and does not belong in "establish the CI baseline". GitHub has also deprecated Node 20 on its runners.
 - **Node 26** — not an LTS; a failure there could not be attributed to the code rather than to experimental V8 behaviour. Local development uses 26; CI verifies LTS.
 
+## Reference
+
+[docs/reference.md](docs/reference.md) covers three things in one place:
+
+- **`statusSnapshot()` reference** — every field, what it means, and which values are normal vs. alarming (`overCapacity > 0` is by design; `drainingPools[].forcedReclaimInMs` hitting 0 is the moment a stream is cut)
+- **Upgrading** — every breaking change from v0.2.0 through v0.2.3, each with the action required
+- **Troubleshooting** — plugin not loading, `403 target_not_allowed`, admin token 403, long SSE cut, failures not penalising an IP, switching too often or never
+
+中文版：[docs/reference.zh-CN.md](docs/reference.zh-CN.md)
+
 ## Version
 
 `0.2.2` — see [CHANGELOG.md](CHANGELOG.md) for what changed and what breaks on upgrade.

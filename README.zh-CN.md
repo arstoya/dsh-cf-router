@@ -389,6 +389,16 @@ SSE 额外加 `x-accel-buffering: no`、缺省补 `cache-control: no-cache`、�
 - **Node 20** —— `node --test` 在 20 上不支持 glob，`"test/**/*.test.js"` 会被当成字面路径（实测报 `Could not find ...`）。修它要改 test 脚本，属于行为改动，不该混进「建立 CI 基线」这一步。GitHub 也已在 runner 上弃用 20。
 - **Node 26** —— 非 LTS，一旦挂掉无法区分是代码问题还是实验性 V8 行为。本地开发用 26，CI 验证 LTS。
 
+## 参考文档
+
+[docs/reference.zh-CN.md](docs/reference.zh-CN.md) 把三件事放一处：
+
+- **`statusSnapshot()` 字段说明** —— 每个字段的含义，以及哪些值是正常的、哪些该警惕（`overCapacity > 0` 是刻意设计；`drainingPools[].forcedReclaimInMs` 归零就是流被切断的时刻）
+- **版本升级** —— v0.2.0 到 v0.2.3 全部破坏性变更，每条都写明要做什么
+- **故障排查** —— 插件不加载、`403 target_not_allowed`、管理 Token 403、长 SSE 被切断、请求失败但不惩罚 IP、切得太频繁或从不切换
+
+英文版：[docs/reference.md](docs/reference.md)
+
 ## 版本
 
 `0.2.2` —— 变更与升级注意事项见 [CHANGELOG.md](CHANGELOG.md)。
