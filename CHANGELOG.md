@@ -2,9 +2,9 @@
 
 All notable changes to this project. Versions follow the milestone plan tracked in the issue tracker.
 
-**Release convention**: every version tag gets a matching GitHub Release whose body is
-taken from the section below, plus an install note and the two things that need
-configuring before the plugin does anything useful.
+**Release convention**: every version tag gets a matching GitHub Release that lists
+what was fixed and what was added — a condensed version of the section below.
+Details and rationale stay in this file; the release page is for scanning.
 
 ---
 
