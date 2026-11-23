@@ -93,7 +93,7 @@
         corsAllowOrigin: ""
         # 管理接口鉴权（Issue #8）。修改型端点必须带 Bearer Token。
         # ⚠ 不要把 Token 直接写在这里（会进版本库）。用 adminTokenFile 指向仓库外的文件：
-        #     node scripts/generate-admin-token.mjs --write /path/outside/repo/admin.token
+        #     npx dsh-cf-router-token --write /path/outside/repo/admin.token
         adminTokenFile: ""
         # 只有在文件未被版本控制且你清楚风险时才直接填这里。
         adminToken: ""

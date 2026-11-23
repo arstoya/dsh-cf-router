@@ -246,7 +246,11 @@ Error responses share one shape:
 Mutating endpoints require a Bearer token:
 
 ```bash
-node scripts/generate-admin-token.mjs --write /path/outside/repo/admin.token
+# from this repo
+npm run token -- --write /path/outside/repo/admin.token
+# or, if installed as a plugin
+npx dsh-cf-router-token --write /path/outside/repo/admin.token
+
 # then in your profile patch:
 #   adminTokenFile: /path/outside/repo/admin.token
 

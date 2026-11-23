@@ -205,7 +205,10 @@ targets: ["api.example.com"]     # ← 要转发的上游都必须先进这里
 **2. 修改型管理端点必须带 Bearer Token**
 
 ```bash
-node scripts/generate-admin-token.mjs --write /仓库外路径/admin.token
+# 源码仓库里
+npm run token -- --write /仓库外路径/admin.token
+# 作为插件安装后
+npx dsh-cf-router-token --write /仓库外路径/admin.token
 # 然后在 profile patch 里配 adminTokenFile
 ```
 
@@ -295,7 +298,10 @@ Copy-Item "<能工作的插件>\node_modules\@deepseek-ai" "<插件目录>\node_
 没配 `adminToken` 或 `adminTokenFile`，修改型端点在设计上被禁用。生成：
 
 ```bash
-node scripts/generate-admin-token.mjs --write /仓库外路径/admin.token
+# 源码仓库里
+npm run token -- --write /仓库外路径/admin.token
+# 作为插件安装后
+npx dsh-cf-router-token --write /仓库外路径/admin.token
 ```
 
 把 `adminTokenFile` 指向该路径。**不要**把 Token 写进 `cordis.patch.yml`——那会进版本库。

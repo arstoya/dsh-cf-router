@@ -207,7 +207,11 @@ Anything not in `targets` returns `403 target_not_allowed`.
 **2. Mutating admin endpoints require a Bearer token**
 
 ```bash
-node scripts/generate-admin-token.mjs --write /path/outside/repo/admin.token
+# from this repo
+npm run token -- --write /path/outside/repo/admin.token
+# or, if installed as a plugin
+npx dsh-cf-router-token --write /path/outside/repo/admin.token
+
 # then in the profile patch:
 #   adminTokenFile: /path/outside/repo/admin.token
 ```
@@ -300,7 +304,10 @@ If `allowedTargets` is populated but your host is missing, the name is not an ex
 No `adminToken` or `adminTokenFile` is set, so mutating endpoints are disabled by design. Generate one:
 
 ```bash
-node scripts/generate-admin-token.mjs --write /path/outside/repo/admin.token
+# from this repo
+npm run token -- --write /path/outside/repo/admin.token
+# or, if installed as a plugin
+npx dsh-cf-router-token --write /path/outside/repo/admin.token
 ```
 
 Set `adminTokenFile` to that path. Do **not** put the token in `cordis.patch.yml` — it would enter version control.
