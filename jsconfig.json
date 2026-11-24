@@ -8,12 +8,13 @@
     "lib": ["ES2023"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "strict": false,
+    "strictNullChecks": true,
     "noImplicitAny": false,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
   "include": [
-    "lib/contract/**/*.mjs"
+    "lib/contract/**/*.mjs",
+    "lib/transport.mjs"
   ]
 }
