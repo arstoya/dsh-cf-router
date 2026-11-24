@@ -23,6 +23,8 @@
     "lib/client-auth.mjs",
     "lib/admin-api.mjs",
     "lib/streaming.mjs",
-    "lib/retry-policy.mjs"
+    "lib/retry-policy.mjs",
+    "lib/forward-proxy.mjs",
+    "lib/reverse-proxy.mjs"
   ]
 }
