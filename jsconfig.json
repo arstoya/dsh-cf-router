@@ -1,5 +1,5 @@
 {
-  "// 说明": "只检查契约层（v0.4.0 新代码）。存量 lib/index.js 与 14 个旧模块没有 JSDoc，纳入会一次报出上百个错，等于把类型检查变成噪音。增量从这里开始，将来逐个模块纳入。",
+  "// 说明": "只检查 v0.4.0 的新模块。存量 lib/index.js 与 14 个旧模块没有 JSDoc，全量纳入会一次报出上百个错，把检查变成噪音。每新增一个模块就纳入一个，逐步扩大。",
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,
@@ -10,14 +10,14 @@
     ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "strict": false,
+    "strictNullChecks": true,
     "noImplicitAny": false,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "strictNullChecks": true
+    "forceConsistentCasingInFileNames": true
   },
   "include": [
     "lib/contract/**/*.mjs",
-    "lib/target-validator.mjs"
+    "lib/target-validator.mjs",
+    "lib/transport.mjs"
   ]
 }
