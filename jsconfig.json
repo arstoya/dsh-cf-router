@@ -21,6 +21,8 @@
     "lib/target-validator.mjs",
     "lib/transport.mjs",
     "lib/client-auth.mjs",
-    "lib/admin-api.mjs"
+    "lib/admin-api.mjs",
+    "lib/streaming.mjs",
+    "lib/retry-policy.mjs"
   ]
 }
