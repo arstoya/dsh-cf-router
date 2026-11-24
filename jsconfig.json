@@ -5,15 +5,19 @@
     "checkJs": true,
     "noEmit": true,
     "target": "ES2023",
-    "lib": ["ES2023"],
+    "lib": [
+      "ES2023"
+    ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": false,
     "noImplicitAny": false,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "strictNullChecks": true
   },
   "include": [
-    "lib/contract/**/*.mjs"
+    "lib/contract/**/*.mjs",
+    "lib/target-validator.mjs"
   ]
 }
