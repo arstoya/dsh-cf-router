@@ -41,18 +41,32 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      # 不跑 npm ci：devDependencies 为 null，仓库里也没有 lockfile。
-      # 跑它只会因缺少 lockfile 而失败，或生成一份不该提交的锁文件。
+      # 运行时依赖依然是 null（用户装不上任何东西），但 devDependencies 里有
+      # typescript 与 @types/node 供 `npm run typecheck` 使用。lockfile 已入库，
+      # 所以用 npm ci 保证可复现 —— 否则 TS 大版本升级会让类型检查无故变红。
+      - name: 安装开发依赖
+        run: npm ci
 
       - name: 语法检查（硬性）
         # doctor 里的 node --check 是可选的，这里把它独立成硬性步骤：
         # 语法错必须立刻失败，不能被 doctor 的 continue-on-error 掩盖。
+        #
+        # 用 find 而不是 glob：bash 默认不开 globstar，`lib/**/*.mjs` 会被当成
+        # `lib/*/*.mjs`，匹配不到 lib/index.js（v0.4.0 加了子目录后实测踩到）。
         run: |
-          for f in lib/*.js lib/*.mjs scripts/*.mjs test/**/*.js; do
-            [ -f "$f" ] || continue
+          files=$(find lib scripts test -type f \( -name '*.js' -o -name '*.mjs' \))
+          n=0
+          for f in $files; do
             node --check "$f" || exit 1
+            n=$((n+1))
           done
-          echo "node --check 全部通过"
+          echo "node --check 通过：$n 个文件"
+
+      - name: 类型检查（契约层，硬性）
+        # 目前只覆盖 lib/contract/（见 jsconfig.json 的 include）。
+        # 存量代码没有 JSDoc，全量纳入会一次报出上百个错，把检查变成噪音。
+        # v0.4.0 起每新增一个模块就纳入一个目录。
+        run: npm run typecheck"
 
       - name: 测试
         run: npm test

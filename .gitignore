@@ -1,6 +1,10 @@
 # 依赖（peer 由 DSH 宿主提供，不随包分发）
 node_modules/
-package-lock.json
+
+# package-lock.json **入库**：运行时依赖仍然是 null（用户装不上任何东西），
+# 但 devDependencies 里有 typescript / @types/node 用于 `npm run typecheck`。
+# 锁住它们是为了 CI 可复现 —— 否则某天 TS 大版本升级会让类型检查突然变红，
+# 而代码一行没改。
 
 # 运行时产物
 *-state.json

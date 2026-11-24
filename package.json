@@ -40,6 +40,7 @@
   ],
   "scripts": {
     "doctor": "node scripts/doctor.mjs",
+    "typecheck": "tsc -p jsconfig.json",
     "test": "node --import ./test/helpers/stub-register.mjs --test \"test/**/*.test.js\"",
     "test:unit": "node --import ./test/helpers/stub-register.mjs --test \"test/unit/**/*.test.js\"",
     "test:integration": "node --import ./test/helpers/stub-register.mjs --test \"test/integration/**/*.test.js\"",
@@ -79,5 +80,9 @@
   },
   "bin": {
     "dsh-cf-router-token": "./scripts/generate-admin-token.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^5.9.3"
   }
 }

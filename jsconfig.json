@@ -1,0 +1,19 @@
+{
+  "// 说明": "只检查契约层（v0.4.0 新代码）。存量 lib/index.js 与 14 个旧模块没有 JSDoc，纳入会一次报出上百个错，等于把类型检查变成噪音。增量从这里开始，将来逐个模块纳入。",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "lib/contract/**/*.mjs"
+  ]
+}
