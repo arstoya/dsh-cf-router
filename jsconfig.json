@@ -1,5 +1,6 @@
 {
   "// 说明": "只检查 v0.4.0 的新模块。存量 lib/index.js 与 14 个旧模块没有 JSDoc，全量纳入会一次报出上百个错，把检查变成噪音。每新增一个模块就纳入一个，逐步扩大。",
+  "// strictNullChecks 必须开": "判别式联合（{ok:true}|{ok:false,reason}）的收窄依赖它。关掉时 if (!p.ok) p.reason 会报「reason 不存在」。",
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,
@@ -19,6 +20,7 @@
     "lib/contract/**/*.mjs",
     "lib/target-validator.mjs",
     "lib/transport.mjs",
-    "lib/client-auth.mjs"
+    "lib/client-auth.mjs",
+    "lib/admin-api.mjs"
   ]
 }
