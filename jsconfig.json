@@ -25,6 +25,8 @@
     "lib/streaming.mjs",
     "lib/retry-policy.mjs",
     "lib/forward-proxy.mjs",
-    "lib/reverse-proxy.mjs"
+    "lib/reverse-proxy.mjs",
+    "lib/connect-tunnel.mjs",
+    "lib/reverse-streaming.mjs"
   ]
 }
